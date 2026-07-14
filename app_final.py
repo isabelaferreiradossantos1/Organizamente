@@ -112,7 +112,7 @@ def hash_senha(senha):
 # Inicializa o banco de dados antes do primeiro acesso
 inicializar_banco()
 
-# --- TEMPLATE HTML COMPLETO (Com Login, Registro e Dashboard adaptado para Mobile) ---
+# --- TEMPLATE HTML COMPLETO (Design Limpo e Minimalista sem Emojis no Topo/Abas) ---
 HTML_TEMPLATE = '''
 <!DOCTYPE html>
 <html lang="pt-BR">
@@ -121,7 +121,7 @@ HTML_TEMPLATE = '''
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
     <link rel="manifest" href="/manifest.json">
     <meta name="theme-color" content="#D46A43">
-    <title>OrganizaMente 🥇</title>
+    <title>OrganizaMente</title>
     <style>
         :root {
             --bg-color: #FAF6F0; /* Bege Acolhedor */
@@ -149,8 +149,8 @@ HTML_TEMPLATE = '''
 
         header {
             text-align: center;
-            margin-top: 10px;
-            margin-bottom: 20px;
+            margin-top: 15px;
+            margin-bottom: 25px;
             width: 100%;
             max-width: 600px;
             display: flex;
@@ -159,69 +159,98 @@ HTML_TEMPLATE = '''
         }
 
         h1 {
-            font-size: 1.6rem;
+            font-size: 1.5rem;
             margin: 0;
             color: var(--accent-terracotta);
-            font-weight: 700;
+            font-weight: 800;
+            letter-spacing: 2px;
+            text-transform: uppercase;
+        }
+
+        h1 span {
+            color: var(--accent-peach);
         }
 
         .user-badge {
-            font-size: 0.85rem;
+            font-size: 0.8rem;
             background-color: var(--accent-peach);
             color: var(--text-main);
-            padding: 5px 12px;
-            border-radius: 12px;
+            padding: 6px 14px;
+            border-radius: 20px;
             text-decoration: none;
             font-weight: bold;
+            transition: opacity 0.2s;
+        }
+
+        .user-badge:hover {
+            opacity: 0.9;
         }
 
         /* Telas de Login e Cadastro */
         .auth-container {
             background-color: var(--card-bg);
-            padding: 30px;
-            border-radius: 16px;
+            padding: 35px 30px;
+            border-radius: 20px;
             border: 1px solid var(--border-color);
-            box-shadow: 0 4px 15px rgba(61, 38, 28, 0.05);
+            box-shadow: 0 10px 25px rgba(61, 38, 28, 0.05);
             width: 100%;
             max-width: 360px;
-            margin-top: 50px;
+            margin-top: 60px;
             text-align: center;
         }
 
         .auth-title {
             color: var(--accent-terracotta);
-            margin-bottom: 20px;
-            font-size: 1.5rem;
-            font-weight: 700;
+            margin-bottom: 10px;
+            font-size: 1.6rem;
+            font-weight: 800;
+            letter-spacing: 3px;
+            text-transform: uppercase;
+        }
+
+        .auth-title span {
+            color: var(--accent-peach);
         }
 
         .auth-form {
             display: flex;
             flex-direction: column;
             gap: 15px;
+            margin-top: 25px;
         }
 
         .auth-input {
-            padding: 12px;
+            padding: 14px;
             border: 1px solid var(--border-color);
-            border-radius: 8px;
+            border-radius: 10px;
             outline: none;
             font-size: 1rem;
+            background-color: #FCFAF7;
+            transition: border-color 0.2s;
+        }
+
+        .auth-input:focus {
+            border-color: var(--accent-terracotta);
         }
 
         .auth-btn {
             background-color: var(--accent-terracotta);
             color: white;
             border: none;
-            padding: 12px;
-            border-radius: 8px;
+            padding: 14px;
+            border-radius: 10px;
             font-weight: bold;
             cursor: pointer;
             font-size: 1rem;
+            transition: transform 0.1s, background-color 0.2s;
+        }
+
+        .auth-btn:active {
+            transform: scale(0.98);
         }
 
         .auth-switch {
-            margin-top: 15px;
+            margin-top: 20px;
             font-size: 0.85rem;
             color: var(--text-muted);
         }
@@ -232,11 +261,11 @@ HTML_TEMPLATE = '''
             font-weight: bold;
         }
 
-        /* Sistema de Abas */
+        /* Sistema de Abas Minimalistas */
         .nav-tabs {
             display: flex;
             gap: 8px;
-            margin-bottom: 20px;
+            margin-bottom: 25px;
             width: 100%;
             max-width: 600px;
             overflow-x: auto;
@@ -251,20 +280,23 @@ HTML_TEMPLATE = '''
         .tab-btn {
             background-color: #EFE6D8;
             border: none;
-            padding: 10px 18px;
+            padding: 10px 20px;
             border-radius: 20px;
             cursor: pointer;
             font-weight: 600;
             color: var(--text-main);
             white-space: nowrap;
-            font-size: 0.9rem;
+            font-size: 0.85rem;
             flex-shrink: 0;
+            transition: all 0.2s ease;
+            text-transform: uppercase;
+            letter-spacing: 1px;
         }
 
         .tab-btn.active {
             background-color: var(--accent-terracotta);
             color: white;
-            box-shadow: 0 4px 10px rgba(212, 106, 67, 0.25);
+            box-shadow: 0 4px 10px rgba(212, 106, 67, 0.2);
         }
 
         .tab-content {
@@ -293,13 +325,15 @@ HTML_TEMPLATE = '''
         }
 
         .column h2 {
-            font-size: 1.15rem;
+            font-size: 1.1rem;
             margin-top: 0;
             margin-bottom: 12px;
             color: var(--text-main);
             display: flex;
             align-items: center;
             justify-content: space-between;
+            text-transform: uppercase;
+            letter-spacing: 1px;
         }
 
         .card {
@@ -321,10 +355,12 @@ HTML_TEMPLATE = '''
             background: none;
             border: none;
             cursor: pointer;
-            font-size: 0.85rem;
+            font-size: 0.8rem;
             padding: 10px 14px;
             border-radius: 8px;
-            font-weight: 600;
+            font-weight: bold;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
         }
 
         .btn-move { background-color: #F3EAE0; color: var(--text-main); }
@@ -350,6 +386,8 @@ HTML_TEMPLATE = '''
             border-radius: 12px;
             font-weight: bold;
             font-size: 0.9rem;
+            text-transform: uppercase;
+            letter-spacing: 1px;
         }
 
         /* Layout SMART, Mídia e Finanças */
@@ -375,6 +413,7 @@ HTML_TEMPLATE = '''
             font-weight: bold;
             font-size: 0.7rem;
             color: white;
+            text-transform: uppercase;
         }
 
         .badge-s { background-color: #5C3D2E; }
@@ -391,7 +430,7 @@ HTML_TEMPLATE = '''
             margin-bottom: 12px;
         }
 
-        .form-section h3 { font-size: 0.95rem; margin-top: 0; color: var(--accent-terracotta); }
+        .form-section h3 { font-size: 0.9rem; margin-top: 0; color: var(--accent-terracotta); text-transform: uppercase; letter-spacing: 1px; }
 
         .form-group { display: flex; flex-direction: column; gap: 4px; margin-bottom: 8px; }
         .form-group label { font-size: 0.8rem; font-weight: 600; color: var(--text-muted); }
@@ -410,6 +449,8 @@ HTML_TEMPLATE = '''
             border-radius: 8px;
             font-weight: bold;
             width: 100%;
+            text-transform: uppercase;
+            letter-spacing: 1px;
         }
 
         .active-goals-list {
@@ -482,6 +523,8 @@ HTML_TEMPLATE = '''
             padding: 10px;
             border-radius: 8px;
             font-weight: bold;
+            text-transform: uppercase;
+            letter-spacing: 1px;
         }
 
         .fin-item, .media-item {
@@ -532,6 +575,8 @@ HTML_TEMPLATE = '''
             font-size: 0.95rem;
             border-bottom: 1px solid var(--border-color);
             padding-bottom: 5px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
         }
 
         .filtro-box form {
@@ -553,6 +598,7 @@ HTML_TEMPLATE = '''
             border: none;
             padding: 8px 12px;
             border-radius: 6px;
+            font-weight: bold;
         }
 
         .top5-box {
@@ -562,7 +608,7 @@ HTML_TEMPLATE = '''
             padding: 15px;
             margin-top: 15px;
         }
-        .top5-box h3 { margin-top:0; border-bottom:1px solid var(--border-color); padding-bottom:5px; }
+        .top5-box h3 { margin-top:0; border-bottom:1px solid var(--border-color); padding-bottom:5px; text-transform: uppercase; letter-spacing: 1px; }
 
         .stars { color: var(--star-color); font-weight: bold; }
     </style>
@@ -572,15 +618,16 @@ HTML_TEMPLATE = '''
     <!-- SESSÃO DE LOGIN/CADASTRO -->
     {% if not session.get('user_id') %}
         <div class="auth-container">
-            <h2 class="auth-title" style="letter-spacing: 2px; font-weight: 800; text-transform: uppercase; font-size: 1.6rem;">ORGANIZA<span style="color: var(--accent-peach);">MENTE</span></h2>
-            <p style="font-size:0.85rem; color: var(--text-muted); margin-bottom: 20px;">Organização inteligente para mentes dinâmicas.</p>
+            <!-- Logo minimalista sem emojis -->
+            <h2 class="auth-title">ORGANIZA<span>MENTE</span></h2>
+            <p style="font-size:0.85rem; color: var(--text-muted); margin-bottom: 20px; letter-spacing: 0.5px;">Organização inteligente para mentes dinâmicas.</p>
             
             {% if request.args.get('register') %}
                 <!-- Tela de Cadastro -->
                 <form action="/register" method="POST" class="auth-form">
                     <input type="text" name="username" class="auth-input" placeholder="Criar Usuário" required autocomplete="off">
                     <input type="password" name="password" class="auth-input" placeholder="Criar Senha" required>
-                    <button type="submit" class="auth-btn">Criar Minha Conta ⚡</button>
+                    <button type="submit" class="auth-btn">CRIAR MINHA CONTA</button>
                 </form>
                 <div class="auth-switch">Já tem conta? <a href="/">Fazer Login</a></div>
             {% else %}
@@ -588,7 +635,7 @@ HTML_TEMPLATE = '''
                 <form action="/login" method="POST" class="auth-form">
                     <input type="text" name="username" class="auth-input" placeholder="Usuário" required autocomplete="off">
                     <input type="password" name="password" class="auth-input" placeholder="Senha" required>
-                    <button type="submit" class="auth-btn">Entrar no Espaço Calmo 🧠</button>
+                    <button type="submit" class="auth-btn">ENTRAR NO ESPAÇO CALMO</button>
                 </form>
                 <div class="auth-switch">Novo por aqui? <a href="/?register=true">Criar uma Conta</a></div>
             {% endif %}
@@ -605,15 +652,15 @@ HTML_TEMPLATE = '''
         
         <!-- DASHBOARD MULTIUSUÁRIO AUTENTICADO -->
         <header>
-            <h1>OrganizaMente 🥇</h1>
-            <a href="/logout" class="user-badge">Sair (@{{ session.get('username') }})</a>
+            <h1>ORGANIZA<span>MENTE</span></h1>
+            <a href="/logout" class="user-badge">SAIR (@{{ session.get('username') }})</a>
         </header>
 
         <div class="nav-tabs">
-            <button class="tab-btn active" id="btn-diario" onclick="switchTab('diario')">⚡ Rotina</button>
-            <button class="tab-btn" id="btn-smart" onclick="switchTab('smart')">🎯 SMART</button>
-            <button class="tab-btn" id="btn-midia" onclick="switchTab('midia')">📚 Leituras</button>
-            <button class="tab-btn" id="btn-financeiro" onclick="switchTab('financeiro')">💰 Finanças</button>
+            <button class="tab-btn active" id="btn-diario" onclick="switchTab('diario')">Rotina</button>
+            <button class="tab-btn" id="btn-smart" onclick="switchTab('smart')">SMART</button>
+            <button class="tab-btn" id="btn-midia" onclick="switchTab('midia')">Leituras</button>
+            <button class="tab-btn" id="btn-financeiro" onclick="switchTab('financeiro')">Finanças</button>
         </div>
 
         <!-- ABA 1: ROTINA DIÁRIA -->
@@ -628,13 +675,13 @@ HTML_TEMPLATE = '''
             <main class="board">
                 <!-- Esvaziar a Cabeça -->
                 <div class="column column-dump">
-                    <h2>📥 Esvaziar a Cabeça</h2>
+                    <h2>Esvaziar a Cabeça</h2>
                     {% for task in dados.brain_dump %}
                     <div class="card">
                         <p>{{ task.texto }}</p>
                         <div class="card-actions">
-                            <a href="/move/{{ task.id }}/foco_hoje"><button class="btn-action btn-move">🎯 Focar</button></a>
-                            <a href="/delete/{{ task.id }}"><button class="btn-action btn-delete">🗑️</button></a>
+                            <a href="/move/{{ task.id }}/foco_hoje"><button class="btn-action btn-move">Focar</button></a>
+                            <a href="/delete/{{ task.id }}"><button class="btn-action btn-delete">Remover</button></a>
                         </div>
                     </div>
                     {% endfor %}
@@ -642,7 +689,7 @@ HTML_TEMPLATE = '''
 
                 <!-- Foco de Hoje -->
                 <div class="column column-foco">
-                    <h2>🎯 Foco de Hoje ({{ dados.foco_hoje|length }}/3)</h2>
+                    <h2>Foco de Hoje ({{ dados.foco_hoje|length }}/3)</h2>
                     {% if dados.foco_hoje|length == 0 %}
                         <p style="color: var(--text-muted); font-size: 0.9rem; font-style: italic; padding: 10px 0;">Nenhum foco selecionado.</p>
                     {% endif %}
@@ -651,7 +698,7 @@ HTML_TEMPLATE = '''
                         <p>{{ task.texto }}</p>
                         <div class="card-actions">
                             <a href="/move/{{ task.id }}/concluido"><button class="btn-action btn-done">Feito! 🎉</button></a>
-                            <a href="/move/{{ task.id }}/brain_dump"><button class="btn-action btn-move">↩️ Voltar</button></a>
+                            <a href="/move/{{ task.id }}/brain_dump"><button class="btn-action btn-move">Voltar</button></a>
                         </div>
                     </div>
                     {% endfor %}
@@ -659,7 +706,7 @@ HTML_TEMPLATE = '''
 
                 <!-- Concluído -->
                 <div class="column column-concluido">
-                    <h2>🎉 Concluído</h2>
+                    <h2>Concluído</h2>
                     {% for task in dados.concluido %}
                     <div class="card">
                         <p>{{ task.texto }}</p>
@@ -672,18 +719,18 @@ HTML_TEMPLATE = '''
             </main>
         </div>
 
-        <!-- ABA 2: PLANEJADOR SMART (VERSÃO COMPLETA E DETALHADA) -->
+        <!-- ABA 2: PLANEJADOR SMART -->
         <div id="tab-smart" class="tab-content">
             <div class="smart-container">
                 <div class="smart-header-guide">
-                    <div class="smart-badge badge-s">S - Específica</div>
-                    <div class="smart-badge badge-m">M - Mensurável</div>
-                    <div class="smart-badge badge-a">A - Atingível</div>
-                    <div class="smart-badge badge-r">R - Relevante</div>
-                    <div class="smart-badge badge-t">T - Temporal</div>
+                    <div class="smart-badge badge-s">S</div>
+                    <div class="smart-badge badge-m">M</div>
+                    <div class="smart-badge badge-a">A</div>
+                    <div class="smart-badge badge-r">R</div>
+                    <div class="smart-badge badge-t">T</div>
                 </div>
 
-                <h2 style="margin-top:0; color: var(--accent-terracotta);">Nova Meta SMART</h2>
+                <h2 style="margin-top:0; color: var(--accent-terracotta); text-transform: uppercase; font-size: 1.25rem; letter-spacing: 1px;">Nova Meta SMART</h2>
                 <form action="/add_smart" method="POST" class="smart-form">
                     <div class="form-section">
                         <h3>1. Definir a Meta</h3>
@@ -699,12 +746,12 @@ HTML_TEMPLATE = '''
                             <label>Passo 1 (Ação Física Prática):</label>
                             <input type="text" name="step1_desc" placeholder="Ação" required>
                         </div>
-                        <div class="form-row">
-                            <div class="form-group">
+                        <div class="form-row" style="display: flex; gap: 8px; margin-top: 5px;">
+                            <div class="form-group" style="flex: 1;">
                                 <label>Tempo</label>
                                 <input type="text" name="step1_time" placeholder="30 min">
                             </div>
-                            <div class="form-group">
+                            <div class="form-group" style="flex: 1;">
                                 <label>Prazo</label>
                                 <input type="text" name="step1_deadline" placeholder="Sábado">
                             </div>
@@ -715,19 +762,19 @@ HTML_TEMPLATE = '''
                         <h3>3. Plano Antifracasso</h3>
                         <div class="form-group">
                             <label>Possível Obstáculo:</label>
-                            <textarea name="obstacles" placeholder="Ex: Ficar escolhendo demais e perder o foco..."></textarea>
+                            <textarea name="obstacles" style="height: 50px;" placeholder="Ex: Ficar escolhendo demais e perder o foco..."></textarea>
                         </div>
                         <div class="form-group">
                             <label>Como vou superar esse obstáculo?</label>
-                            <textarea name="plan_obstacles" placeholder="Ex: Definir despertador de 20 minutos por lote de roupa..."></textarea>
+                            <textarea name="plan_obstacles" style="height: 50px;" placeholder="Ex: Definir despertador de 20 minutos por lote..."></textarea>
                         </div>
                     </div>
 
-                    <button type="submit" class="btn-submit-smart">Salvar Meta SMART 🎯</button>
+                    <button type="submit" class="btn-submit-smart">Salvar Meta SMART</button>
                 </form>
 
                 <div class="active-goals-list">
-                    <h3 style="color: var(--accent-terracotta); border-bottom: 2px solid var(--accent-peach); padding-bottom: 5px;">Minhas Metas</h3>
+                    <h3 style="color: var(--accent-terracotta); border-bottom: 2px solid var(--accent-peach); padding-bottom: 5px; text-transform: uppercase; font-size: 1.1rem; letter-spacing: 1px;">Minhas Metas</h3>
                     {% if dados.metas_smart|length == 0 %}
                         <p style="font-style: italic; color: var(--text-muted);">Nenhuma meta SMART cadastrada ainda.</p>
                     {% endif %}
@@ -759,13 +806,13 @@ HTML_TEMPLATE = '''
         <!-- ABA 3: FILMES E LEITURAS -->
         <div id="tab-midia" class="tab-content">
             <div class="fin-column">
-                <h2 class="fin-title">📚 Leituras e Filmes do Ano</h2>
+                <h2 class="fin-title" style="text-transform: uppercase; letter-spacing: 1px; font-size: 1.1rem;">Leituras e Filmes do Ano</h2>
                 <form action="/add_media" method="POST" class="shelf-form">
                     <input type="text" name="titulo" placeholder="Título..." required>
                     <input type="text" name="autor" placeholder="Autor / Diretor..." required>
                     <select name="tipo" required>
-                        <option value="livros">Livro 📖</option>
-                        <option value="filmes">Filme 🎬</option>
+                        <option value="livros">Livro</option>
+                        <option value="filmes">Filme</option>
                     </select>
                     <select name="nota" required>
                         <option value="5">⭐⭐⭐⭐⭐</option>
@@ -782,12 +829,11 @@ HTML_TEMPLATE = '''
                             <a href="/toggle_media/{{ midia.id }}" style="text-decoration:none; margin-right:8px;">
                                 {% if midia.concluido %}✅{% else %}⬜{% endif %}
                             </a>
-                            {% if midia.tipo == 'livros' %}📖{% else %}🎬{% endif %}
                             <strong style="{% if midia.concluido %}text-decoration:line-through; color:var(--text-muted);{% endif %}">{{ midia.titulo }}</strong>
                         </span>
                         <span>
                             <span class="stars">{% for i in range(midia.nota) %}★{% endfor %}</span>
-                            <a href="/delete_media/{{ midia.id }}" style="text-decoration:none; margin-left:12px;">🗑️</a>
+                            <a href="/delete_media/{{ midia.id }}" style="text-decoration:none; margin-left:12px;">Remover</a>
                         </span>
                     </div>
                     {% endfor %}
@@ -798,7 +844,7 @@ HTML_TEMPLATE = '''
         <!-- ABA 4: CONTROLE FINANCEIRO -->
         <div id="tab-financeiro" class="tab-content">
             <div class="resumo-box">
-                <h3 class="resumo-title">📊 Resumo Mensal</h3>
+                <h3 class="resumo-title" style="text-transform: uppercase; letter-spacing: 1px; font-size: 1.1rem;">Resumo Mensal</h3>
                 
                 <div class="resumo-row">
                     <span>Saldo Inicial (Mês Anterior):</span>
@@ -818,22 +864,22 @@ HTML_TEMPLATE = '''
                 <div class="resumo-row"><span>Gastos Variáveis:</span><span style="color:var(--accent-red);">R$ {{ "%.2f"|format(total_variaveis) }}</span></div>
 
                 {% if saldo_final >= 0 %}
-                <div class="saldo-final-box saldo-positivo">Sobra: R$ {{ "%.2f"|format(saldo_final) }} 🎉</div>
+                <div class="saldo-final-box saldo-positivo">Sobra: R$ {{ "%.2f"|format(saldo_final) }}</div>
                 {% else %}
-                <div class="saldo-final-box saldo-negativo">Falta: R$ {{ "%.2f"|format(saldo_final) }} ⚠️</div>
+                <div class="saldo-final-box saldo-negativo">Falta: R$ {{ "%.2f"|format(saldo_final) }}</div>
                 {% endif %}
             </div>
 
             <!-- Adicionar Lançamento -->
             <div class="fin-column">
-                <h2 class="fin-title">💸 Lançar Transação</h2>
+                <h2 class="fin-title" style="text-transform: uppercase; letter-spacing: 1px; font-size: 1.1rem;">Lançar Transação</h2>
                 <form action="/add_financeiro" method="POST" class="fin-form">
                     <input type="text" name="desc" placeholder="Descrição..." required>
                     <input type="number" step="0.01" name="valor" placeholder="Valor (R$)" required>
                     <select name="tipo" required>
-                        <option value="entradas">Entrada (Salário, VR...) 📥</option>
-                        <option value="gastos_fixos">Gasto Fixo (Contas) 🏠</option>
-                        <option value="gastos_variaveis">Gasto Variável (Cartão...) 🛒</option>
+                        <option value="entradas">Entrada (Salário, VR...)</option>
+                        <option value="gastos_fixos">Gasto Fixo (Contas)</option>
+                        <option value="gastos_variaveis">Gasto Variável (Cartão...)</option>
                     </select>
                     <button type="submit">Salvar Registro</button>
                 </form>
@@ -842,12 +888,11 @@ HTML_TEMPLATE = '''
                     {% for item in dados.financeiro %}
                     <div class="fin-item">
                         <span>
-                            {% if item.tipo == 'entradas' %}📥{% elif item.tipo == 'gastos_fixos' %}🏠{% else %}🛒{% endif %}
                             {{ item.descricao }}
                         </span>
                         <span style="font-weight:bold; {% if item.tipo == 'entradas' %}color:var(--accent-green);{% else %}color:var(--text-main);{% endif %}">
                             R$ {{ "%.2f"|format(item.valor) }}
-                            <a href="/delete_financeiro/{{ item.id }}" style="text-decoration:none; margin-left:8px;">🗑️</a>
+                            <a href="/delete_financeiro/{{ item.id }}" style="text-decoration:none; margin-left:8px;">Remover</a>
                         </span>
                     </div>
                     {% endfor %}
@@ -857,27 +902,27 @@ HTML_TEMPLATE = '''
             <!-- Quero vs Preciso -->
             <div class="filtro-impulso">
                 <div class="filtro-box">
-                    <h3 style="color:var(--accent-terracotta)">🛍️ Quero (Desejo)</h3>
+                    <h3 style="color:var(--accent-terracotta)">Quero (Desejo)</h3>
                     <form action="/add_impulso/quero" method="POST">
                         <input type="text" name="item" placeholder="Blusinha, fone..." required>
                         <button type="submit">+</button>
                     </form>
                     <ul style="padding-left:15px; margin:0; font-size:0.85rem;">
                         {% for item in dados.desejos if item.tipo == 'quero' %}
-                        <li style="margin-bottom:5px;">{{ item.item }} <a href="/delete_impulso/{{ item.id }}">🗑️</a></li>
+                        <li style="margin-bottom:5px;">{{ item.item }} <a href="/delete_impulso/{{ item.id }}">Remover</a></li>
                         {% endfor %}
                     </ul>
                 </div>
 
                 <div class="filtro-box">
-                    <h3 style="color:var(--accent-green)">📍 Preciso (Necessidade)</h3>
+                    <h3 style="color:var(--accent-green)">Preciso (Necessidade)</h3>
                     <form action="/add_impulso/preciso" method="POST">
                         <input type="text" name="item" placeholder="Lente do óculos, mercado..." required>
                         <button type="submit">+</button>
                     </form>
                     <ul style="padding-left:15px; margin:0; font-size:0.85rem;">
                         {% for item in dados.desejos if item.tipo == 'preciso' %}
-                        <li style="margin-bottom:5px;">{{ item.item }} <a href="/delete_impulso/{{ item.id }}">🗑️</a></li>
+                        <li style="margin-bottom:5px;">{{ item.item }} <a href="/delete_impulso/{{ item.id }}">Remover</a></li>
                         {% endfor %}
                     </ul>
                 </div>
