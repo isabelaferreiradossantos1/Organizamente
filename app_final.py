@@ -1,60 +1,127 @@
 # -*- coding: utf-8 -*-
-from flask import Flask, render_template_string, request, redirect, url_for
-import json
+from flask import Flask, render_template_string, request, redirect, url_for, session, send_from_directory
+import sqlite3
+import hashlib
 import os
 
 app = Flask(__name__)
-DATA_FILE = 'tasks.json'
+app.secret_key = 'chave_secreta_super_dopaminergica' # Requerido para gerenciar sessões de login
 
-def inicializar_dados():
-    default_data = {
-        "brain_dump": [], 
-        "foco_hoje": [], 
-        "concluido": [],
-        "metas_smart": [],
-        "livros": [],
-        "filmes": [],
-        "anotacoes_midia": "",
-        "meta_livros_quero": 10,
-        "meta_filmes_quero": 20,
-        # Estrutura Financeira
-        "saldo_inicial": 0.0,
-        "entradas": [],       
-        "gastos_fixos": [],   
-        "gastos_variaveis": [],
-        "quero": [],          
-        "preciso": []         
-    }
-    if not os.path.exists(DATA_FILE):
-        return default_data
+DB_FILE = 'organizamente.db'
+
+# --- FUNÇÕES DE BANCO DE DE DADOS ---
+
+def obter_conexao():
+    conn = sqlite3.connect(DB_FILE)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+def inicializar_banco():
+    conn = obter_conexao()
+    cursor = conn.cursor()
     
-    with open(DATA_FILE, 'r', encoding='utf-8') as f:
-        try:
-            dados = json.load(f)
-        except json.JSONDecodeError:
-            return default_data
-            
-    # Garante retrocompatibilidade para as novas chaves
-    for chave, valor in default_data.items():
-        if chave not in dados:
-            dados[chave] = valor
-    return dados
+    # Tabela de Usuários
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS usuarios (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT UNIQUE NOT NULL,
+            password TEXT NOT NULL,
+            saldo_inicial REAL DEFAULT 0.0,
+            anotacoes_midia TEXT DEFAULT '',
+            meta_livros INTEGER DEFAULT 10,
+            meta_filmes INTEGER DEFAULT 20
+        )
+    ''')
+    
+    # Tabela de Tarefas (Brain Dump / Foco / Concluído)
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS tarefas (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            texto TEXT NOT NULL,
+            coluna TEXT NOT NULL, -- 'brain_dump', 'foco_hoje', 'concluido'
+            FOREIGN KEY (user_id) REFERENCES usuarios (id) ON DELETE CASCADE
+        )
+    ''')
+    
+    # Tabela de Metas SMART
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS metas_smart (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            goal_name TEXT NOT NULL,
+            step1_desc TEXT,
+            step1_time TEXT,
+            step1_deadline TEXT,
+            step2_desc TEXT,
+            step2_time TEXT,
+            step2_deadline TEXT,
+            resources TEXT,
+            obstacles TEXT,
+            plan_obstacles TEXT,
+            success_measurement TEXT,
+            achieved_outcome TEXT,
+            FOREIGN KEY (user_id) REFERENCES usuarios (id) ON DELETE CASCADE
+        )
+    ''')
+    
+    # Tabela de Leituras & Filmes
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS mídias (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            titulo TEXT NOT NULL,
+            autor TEXT,
+            nota INTEGER,
+            tipo TEXT NOT NULL, -- 'livros' ou 'filmes'
+            concluido INTEGER DEFAULT 0, -- 0 para Falso, 1 para Verdadeiro
+            FOREIGN KEY (user_id) REFERENCES usuarios (id) ON DELETE CASCADE
+        )
+    ''')
+    
+    # Tabela Financeira
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS financeiro (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            descricao TEXT NOT NULL,
+            valor REAL NOT NULL,
+            tipo TEXT NOT NULL, -- 'entradas', 'gastos_fixos', 'gastos_variaveis'
+            FOREIGN KEY (user_id) REFERENCES usuarios (id) ON DELETE CASCADE
+        )
+    ''')
+    
+    # Tabela Quero vs Preciso
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS desejos (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            item TEXT NOT NULL,
+            tipo TEXT NOT NULL, -- 'quero' ou 'preciso'
+            FOREIGN KEY (user_id) REFERENCES usuarios (id) ON DELETE CASCADE
+        )
+    ''')
+    
+    conn.commit()
+    conn.close()
 
-def ler_dados():
-    return inicializar_dados()
+# Criptografia simples de senha para segurança básica
+def hash_senha(senha):
+    return hashlib.sha256(senha.encode('utf-8')).hexdigest()
 
-def salvar_dados(dados):
-    with open(DATA_FILE, 'w', encoding='utf-8') as f:
-        json.dump(dados, f, indent=4, ensure_ascii=False)
+# Inicializa o banco de dados antes do primeiro acesso
+inicializar_banco()
 
-# CSS & HTML - Edição Definitiva com Paleta Brisa Solar e SMART Completo
+# --- TEMPLATE HTML COMPLETO (Com Login, Registro e Dashboard adaptado para Mobile) ---
 HTML_TEMPLATE = '''
 <!DOCTYPE html>
 <html lang="pt-BR">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Meu Dopamine Dashboard ⚡</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <link rel="manifest" href="/manifest.json">
+    <meta name="theme-color" content="#D46A43">
+    <title>OrganizaMente 🥇</title>
     <style>
         :root {
             --bg-color: #FAF6F0; /* Bege Acolhedor */
@@ -70,11 +137,11 @@ HTML_TEMPLATE = '''
         }
 
         body {
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
             background-color: var(--bg-color);
             color: var(--text-main);
             margin: 0;
-            padding: 20px;
+            padding: 10px;
             display: flex;
             flex-direction: column;
             align-items: center;
@@ -82,40 +149,116 @@ HTML_TEMPLATE = '''
 
         header {
             text-align: center;
-            margin-bottom: 30px;
+            margin-top: 10px;
+            margin-bottom: 20px;
+            width: 100%;
+            max-width: 600px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
         }
 
         h1 {
-            font-size: 2.2rem;
-            margin-bottom: 5px;
+            font-size: 1.6rem;
+            margin: 0;
             color: var(--accent-terracotta);
             font-weight: 700;
         }
 
-        .subtitle {
-            color: var(--text-muted);
-            margin-top: 0;
+        .user-badge {
+            font-size: 0.85rem;
+            background-color: var(--accent-peach);
+            color: var(--text-main);
+            padding: 5px 12px;
+            border-radius: 12px;
+            text-decoration: none;
+            font-weight: bold;
+        }
+
+        /* Telas de Login e Cadastro */
+        .auth-container {
+            background-color: var(--card-bg);
+            padding: 30px;
+            border-radius: 16px;
+            border: 1px solid var(--border-color);
+            box-shadow: 0 4px 15px rgba(61, 38, 28, 0.05);
+            width: 100%;
+            max-width: 360px;
+            margin-top: 50px;
+            text-align: center;
+        }
+
+        .auth-title {
+            color: var(--accent-terracotta);
+            margin-bottom: 20px;
+            font-size: 1.5rem;
+            font-weight: 700;
+        }
+
+        .auth-form {
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+        }
+
+        .auth-input {
+            padding: 12px;
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            outline: none;
             font-size: 1rem;
         }
 
-        /* Abas */
+        .auth-btn {
+            background-color: var(--accent-terracotta);
+            color: white;
+            border: none;
+            padding: 12px;
+            border-radius: 8px;
+            font-weight: bold;
+            cursor: pointer;
+            font-size: 1rem;
+        }
+
+        .auth-switch {
+            margin-top: 15px;
+            font-size: 0.85rem;
+            color: var(--text-muted);
+        }
+
+        .auth-switch a {
+            color: var(--accent-terracotta);
+            text-decoration: none;
+            font-weight: bold;
+        }
+
+        /* Sistema de Abas */
         .nav-tabs {
             display: flex;
-            gap: 10px;
-            margin-bottom: 25px;
+            gap: 8px;
+            margin-bottom: 20px;
             width: 100%;
-            max-width: 1050px;
+            max-width: 600px;
+            overflow-x: auto;
+            padding-bottom: 8px;
+            scrollbar-width: none;
+        }
+
+        .nav-tabs::-webkit-scrollbar {
+            display: none;
         }
 
         .tab-btn {
             background-color: #EFE6D8;
             border: none;
-            padding: 12px 22px;
+            padding: 10px 18px;
             border-radius: 20px;
             cursor: pointer;
             font-weight: 600;
             color: var(--text-main);
-            transition: all 0.2s ease;
+            white-space: nowrap;
+            font-size: 0.9rem;
+            flex-shrink: 0;
         }
 
         .tab-btn.active {
@@ -127,33 +270,32 @@ HTML_TEMPLATE = '''
         .tab-content {
             display: none;
             width: 100%;
-            max-width: 1050px;
+            max-width: 600px;
         }
 
         .tab-content.active {
             display: block;
         }
 
-        /* Diário */
+        /* Board da Rotina */
         .board {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(310px, 1fr));
-            gap: 20px;
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
             width: 100%;
         }
 
         .column {
-            background-color: rgba(255, 255, 255, 0.65);
+            background-color: rgba(255, 255, 255, 0.7);
             border-radius: 16px;
-            padding: 20px;
-            box-shadow: 0 4px 12px rgba(61, 38, 28, 0.02);
+            padding: 15px;
             border: 1px solid var(--border-color);
         }
 
         .column h2 {
-            font-size: 1.25rem;
+            font-size: 1.15rem;
             margin-top: 0;
-            margin-bottom: 15px;
+            margin-bottom: 12px;
             color: var(--text-main);
             display: flex;
             align-items: center;
@@ -162,21 +304,17 @@ HTML_TEMPLATE = '''
 
         .card {
             background-color: var(--card-bg);
-            padding: 15px;
+            padding: 12px;
             border-radius: 10px;
-            margin-bottom: 12px;
+            margin-bottom: 10px;
             box-shadow: 0 2px 6px rgba(61,38,28,0.03);
             border-left: 5px solid var(--accent-peach);
-            display: flex;
-            flex-direction: column;
-            gap: 10px;
         }
 
         .column-foco .card { border-left-color: var(--accent-terracotta); }
-        .column-concluido .card { border-left-color: var(--accent-green); opacity: 0.7; text-decoration: line-through; }
+        .column-concluido .card { border-left-color: var(--accent-green); opacity: 0.6; }
 
-        .card p { margin: 0; font-size: 0.95rem; line-height: 1.4; }
-
+        .card p { margin: 0 0 10px 0; font-size: 0.95rem; line-height: 1.4; }
         .card-actions { display: flex; justify-content: flex-end; gap: 8px; }
 
         .btn-action {
@@ -184,20 +322,20 @@ HTML_TEMPLATE = '''
             border: none;
             cursor: pointer;
             font-size: 0.85rem;
-            padding: 6px 12px;
-            border-radius: 6px;
-            transition: background 0.2s;
+            padding: 10px 14px;
+            border-radius: 8px;
+            font-weight: 600;
         }
 
         .btn-move { background-color: #F3EAE0; color: var(--text-main); }
-        .btn-done { background-color: rgba(129, 178, 154, 0.2); color: #4f7a64; font-weight: bold; }
+        .btn-done { background-color: rgba(129, 178, 154, 0.2); color: #4f7a64; }
         .btn-delete { background-color: rgba(212, 106, 67, 0.1); color: var(--accent-terracotta); }
 
-        .quick-capture { width: 100%; margin-bottom: 30px; }
-        .quick-capture form { display: flex; gap: 10px; }
+        .quick-capture { width: 100%; margin-bottom: 20px; }
+        .quick-capture form { display: flex; gap: 8px; }
         .quick-capture input[type="text"] {
             flex: 1;
-            padding: 15px;
+            padding: 12px;
             border: 2px solid var(--border-color);
             border-radius: 12px;
             font-size: 1rem;
@@ -208,34 +346,34 @@ HTML_TEMPLATE = '''
             background-color: var(--accent-terracotta);
             color: white;
             border: none;
-            padding: 0 25px;
+            padding: 0 18px;
             border-radius: 12px;
             font-weight: bold;
-            cursor: pointer;
+            font-size: 0.9rem;
         }
 
-        /* --- SESSÃO METAS SMART (VERSÃO COMPLETA) --- */
-        .smart-container {
+        /* Layout SMART, Mídia e Finanças */
+        .smart-container, .fin-column, .resumo-box, .filtro-box {
             background-color: var(--card-bg);
-            padding: 25px;
+            padding: 15px;
             border-radius: 16px;
             border: 1px solid var(--border-color);
-            box-shadow: 0 4px 15px rgba(0,0,0,0.02);
+            margin-bottom: 15px;
         }
 
         .smart-header-guide {
             display: grid;
             grid-template-columns: repeat(5, 1fr);
-            gap: 8px;
-            margin-bottom: 25px;
+            gap: 4px;
+            margin-bottom: 15px;
         }
 
         .smart-badge {
             text-align: center;
-            padding: 10px;
-            border-radius: 8px;
+            padding: 6px;
+            border-radius: 6px;
             font-weight: bold;
-            font-size: 0.85rem;
+            font-size: 0.7rem;
             color: white;
         }
 
@@ -245,82 +383,45 @@ HTML_TEMPLATE = '''
         .badge-r { background-color: #D49077; }
         .badge-t { background-color: #E6B6A5; }
 
-        .smart-form {
-            display: grid;
-            grid-template-columns: 1fr;
-            gap: 20px;
-        }
-
         .form-section {
             border: 1px solid var(--border-color);
-            padding: 18px;
-            border-radius: 10px;
+            padding: 12px;
+            border-radius: 8px;
             background-color: #FAF9F6;
-        }
-
-        .form-section h3 {
-            margin-top: 0;
             margin-bottom: 12px;
-            font-size: 1rem;
-            color: var(--accent-terracotta);
-            border-bottom: 2px solid var(--border-color);
-            padding-bottom: 5px;
         }
 
-        .form-row {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-            gap: 15px;
-            margin-bottom: 10px;
-        }
+        .form-section h3 { font-size: 0.95rem; margin-top: 0; color: var(--accent-terracotta); }
 
-        .form-group {
-            display: flex;
-            flex-direction: column;
-            gap: 5px;
-        }
-
-        .form-group label {
-            font-size: 0.85rem;
-            font-weight: 600;
-            color: var(--text-muted);
-        }
-
+        .form-group { display: flex; flex-direction: column; gap: 4px; margin-bottom: 8px; }
+        .form-group label { font-size: 0.8rem; font-weight: 600; color: var(--text-muted); }
         .form-group input, .form-group textarea {
             padding: 10px;
             border: 1px solid var(--border-color);
-            border-radius: 6px;
-            font-family: inherit;
+            border-radius: 8px;
             font-size: 0.9rem;
-        }
-
-        .form-group textarea {
-            resize: vertical;
-            height: 60px;
         }
 
         .btn-submit-smart {
             background-color: var(--accent-terracotta);
             color: white;
             border: none;
-            padding: 12px 25px;
+            padding: 12px;
             border-radius: 8px;
             font-weight: bold;
-            cursor: pointer;
-            font-size: 1rem;
-            margin-top: 10px;
+            width: 100%;
         }
 
         .active-goals-list {
-            margin-top: 30px;
+            margin-top: 20px;
         }
 
         .goal-item {
             background-color: #FAF9F6;
             border-left: 6px solid var(--accent-terracotta);
-            padding: 20px;
+            padding: 15px;
             border-radius: 8px;
-            margin-bottom: 15px;
+            margin-bottom: 12px;
             border: 1px solid var(--border-color);
             border-left-width: 6px;
         }
@@ -328,28 +429,27 @@ HTML_TEMPLATE = '''
         .goal-item-header {
             display: flex;
             justify-content: space-between;
-            align-items: flex-start;
-            margin-bottom: 10px;
+            align-items: center;
+            margin-bottom: 8px;
         }
 
         .goal-title {
-            font-size: 1.15rem;
+            font-size: 1.05rem;
             font-weight: bold;
             color: var(--accent-terracotta);
             margin: 0;
         }
 
         .goal-grid {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 15px;
-            margin-top: 15px;
-            font-size: 0.9rem;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            font-size: 0.85rem;
         }
 
         .goal-sub-box {
             background: white;
-            padding: 12px;
+            padding: 10px;
             border-radius: 6px;
             border: 1px dashed var(--border-color);
         }
@@ -357,259 +457,54 @@ HTML_TEMPLATE = '''
         .goal-sub-box strong {
             color: var(--text-main);
             display: block;
-            margin-bottom: 5px;
-            font-size: 0.8rem;
+            margin-bottom: 4px;
+            font-size: 0.75rem;
             text-transform: uppercase;
         }
 
-        .steps-table {
-            width: 100%;
-            border-collapse: collapse;
-            margin-top: 5px;
-        }
-
-        .steps-table th, .steps-table td {
-            border: 1px solid var(--border-color);
-            padding: 8px;
-            text-align: left;
-            font-size: 0.85rem;
-        }
-
-        .steps-table th {
-            background-color: #F3EAE0;
-        }
-
-        /* --- FILMES E LEITURAS --- */
-        .shelf-form {
+        /* Estilos Finanças */
+        .fin-form, .shelf-form {
             display: flex;
-            gap: 10px;
-            margin-bottom: 20px;
-            flex-wrap: wrap;
+            flex-direction: column;
+            gap: 8px;
+            margin-bottom: 15px;
         }
-
-        .shelf-form input[type="text"] {
-            flex: 2;
-            min-width: 180px;
-            padding: 10px 12px;
-            border: 1px solid var(--border-color);
-            border-radius: 8px;
-        }
-
-        .shelf-form select {
-            flex: 1;
-            min-width: 100px;
+        .fin-form input, .shelf-form input, .shelf-form select {
             padding: 10px;
-            border: 1px solid var(--border-color);
             border-radius: 8px;
-            background: white;
+            border: 1px solid var(--border-color);
+            font-size: 0.95rem;
         }
-
-        .shelf-form button {
+        .fin-form button, .shelf-form button {
             background-color: var(--accent-terracotta);
             color: white;
             border: none;
+            padding: 10px;
             border-radius: 8px;
-            padding: 10px 18px;
             font-weight: bold;
-            cursor: pointer;
         }
 
-        .media-item {
+        .fin-item, .media-item {
             display: flex;
             justify-content: space-between;
             align-items: center;
-            padding: 12px 10px;
+            padding: 10px 0;
             border-bottom: 1px dashed var(--border-color);
-            transition: background 0.2s;
-        }
-
-        .media-item:hover {
-            background-color: rgba(243, 179, 145, 0.08);
-        }
-
-        .media-item.concluido span {
-            text-decoration: line-through;
-            color: var(--text-muted);
-        }
-
-        .stars {
-            color: var(--star-color);
-            font-size: 1.1rem;
-            letter-spacing: 2px;
-        }
-
-        .media-sidebar {
-            display: flex;
-            flex-direction: column;
-            gap: 20px;
-        }
-
-        .stat-badge-box {
-            background: linear-gradient(135deg, var(--accent-peach) 0%, #FAF6F0 100%);
-            border: 1px solid var(--border-color);
-            border-radius: 12px;
-            padding: 20px;
-            text-align: center;
-            color: var(--text-main);
-        }
-
-        .stat-number {
-            font-size: 2.2rem;
-            font-weight: 800;
-            color: var(--accent-terracotta);
-            margin: 5px 0;
-        }
-
-        .top5-box {
-            background: var(--card-bg);
-            border: 1px solid var(--border-color);
-            border-radius: 16px;
-            padding: 20px;
-        }
-
-        .top5-box h3 {
-            color: var(--text-main);
-            border-bottom: 1px solid var(--border-color);
-            padding-bottom: 8px;
-            margin-top: 0;
-        }
-
-        .top5-list {
-            padding-left: 20px;
-            margin-bottom: 0;
-        }
-
-        .top5-list li {
-            margin-bottom: 8px;
-            font-weight: 500;
-        }
-
-        .notes-textarea {
-            width: 100%;
-            height: 150px;
-            border: 1px solid var(--border-color);
-            border-radius: 10px;
-            padding: 12px;
-            font-family: inherit;
-            resize: none;
-            box-sizing: border-box;
-            background-color: #FAF9F6;
-        }
-
-        .btn-save-notes {
-            background-color: var(--text-main);
-            color: white;
-            border: none;
-            padding: 8px 16px;
-            border-radius: 6px;
-            cursor: pointer;
-            font-weight: bold;
-            margin-top: 8px;
-        }
-
-        /* --- SESSÃO FINANCEIRA --- */
-        .fin-layout {
-            display: grid;
-            grid-template-columns: 2fr 1fr;
-            gap: 25px;
-            width: 100%;
-        }
-
-        @media (max-width: 900px) {
-            .fin-layout { grid-template-columns: 1fr; }
-        }
-
-        .fin-column {
-            background-color: var(--card-bg);
-            border-radius: 16px;
-            padding: 25px;
-            border: 1px solid var(--border-color);
-            box-shadow: 0 4px 15px rgba(0,0,0,0.01);
-            margin-bottom: 25px;
-        }
-
-        .fin-title {
-            color: var(--accent-terracotta);
-            border-bottom: 2px solid var(--accent-peach);
-            padding-bottom: 8px;
-            margin-top: 0;
-            margin-bottom: 15px;
-            font-size: 1.3rem;
-        }
-
-        .fin-form {
-            display: flex;
-            gap: 10px;
-            margin-bottom: 15px;
-        }
-
-        .fin-form input[type="text"] {
-            flex: 2;
-            padding: 8px 12px;
-            border: 1px solid var(--border-color);
-            border-radius: 8px;
-        }
-
-        .fin-form input[type="number"] {
-            flex: 1;
-            padding: 8px 12px;
-            border: 1px solid var(--border-color);
-            border-radius: 8px;
-        }
-
-        .fin-form button {
-            background-color: var(--accent-terracotta);
-            color: white;
-            border: none;
-            border-radius: 8px;
-            padding: 8px 15px;
-            font-weight: bold;
-            cursor: pointer;
-        }
-
-        .fin-list {
-            width: 100%;
-            margin-top: 10px;
-        }
-
-        .fin-item {
-            display: flex;
-            justify-content: space-between;
-            padding: 8px 5px;
-            border-bottom: 1px dashed var(--border-color);
-            font-size: 0.95rem;
-        }
-
-        .resumo-box {
-            background: #FFFDF9;
-            border: 2px solid var(--accent-terracotta);
-            border-radius: 16px;
-            padding: 20px;
-        }
-
-        .resumo-title {
-            text-align: center;
-            margin-top: 0;
-            color: var(--accent-terracotta);
-            font-weight: bold;
-            border-bottom: 1px solid var(--border-color);
-            padding-bottom: 8px;
+            font-size: 0.9rem;
         }
 
         .resumo-row {
             display: flex;
             justify-content: space-between;
-            padding: 10px 0;
-            border-bottom: 1px solid #FAF6F0;
+            padding: 8px 0;
             font-weight: 500;
         }
 
         .saldo-final-box {
-            margin-top: 15px;
-            padding: 15px;
-            border-radius: 10px;
+            margin-top: 10px;
+            padding: 12px;
+            border-radius: 8px;
             text-align: center;
-            font-size: 1.25rem;
             font-weight: bold;
         }
 
@@ -626,23 +521,15 @@ HTML_TEMPLATE = '''
         }
 
         .filtro-impulso {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
+            display: flex;
+            flex-direction: column;
             gap: 15px;
-            margin-top: 25px;
-        }
-
-        .filtro-box {
-            background: #FDFBF7;
-            border: 1px dashed var(--accent-peach);
-            border-radius: 12px;
-            padding: 15px;
+            margin-top: 15px;
         }
 
         .filtro-box h3 {
             margin-top: 0;
-            font-size: 1rem;
-            text-align: center;
+            font-size: 0.95rem;
             border-bottom: 1px solid var(--border-color);
             padding-bottom: 5px;
         }
@@ -655,525 +542,348 @@ HTML_TEMPLATE = '''
 
         .filtro-box input {
             flex: 1;
-            padding: 6px;
+            padding: 8px;
             border: 1px solid var(--border-color);
             border-radius: 6px;
-            font-size: 0.85rem;
         }
 
         .filtro-box button {
             background: var(--text-main);
             color: white;
             border: none;
-            padding: 5px 10px;
+            padding: 8px 12px;
             border-radius: 6px;
-            cursor: pointer;
-            font-weight: bold;
         }
+
+        .top5-box {
+            background: var(--card-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            padding: 15px;
+            margin-top: 15px;
+        }
+        .top5-box h3 { margin-top:0; border-bottom:1px solid var(--border-color); padding-bottom:5px; }
+
+        .stars { color: var(--star-color); font-weight: bold; }
     </style>
 </head>
 <body>
 
-    <header>
-        <h1>Meu Espaço Calmo 🧠</h1>
-        <p class="subtitle">Organização simplificada para mentes brilhantes e dinâmicas.</p>
-    </header>
-
-    <div class="nav-tabs">
-        <button class="tab-btn active" id="btn-diario" onclick="switchTab('diario')">⚡ Rotina Diária</button>
-        <button class="tab-btn" id="btn-smart" onclick="switchTab('smart')">🎯 Planejador SMART</button>
-        <button class="tab-btn" id="btn-midia" onclick="switchTab('midia')">📚 Filmes e Leituras</button>
-        <button class="tab-btn" id="btn-financeiro" onclick="switchTab('financeiro')">💰 Controle Financeiro</button>
-    </div>
-
-    <!-- ABA 1: ROTINA DIÁRIA -->
-    <div id="tab-diario" class="tab-content active">
-        <section class="quick-capture">
-            <form action="/add" method="POST">
-                <input type="text" name="task_text" placeholder="Ideia rápida, tarefa ou lembrete... (Digite e aperte Enter)" required autocomplete="off" autofocus>
-                <button type="submit">Guardar</button>
-            </form>
-        </section>
-
-        <main class="board">
-            <div class="column column-dump">
-                <h2>Esvaziar a Cabeça 📥</h2>
-                {% for task in dados.brain_dump %}
-                <div class="card">
-                    <p>{{ task }}</p>
-                    <div class="card-actions">
-                        <a href="/move/brain_dump/foco_hoje/{{ loop.index0 }}"><button class="btn-action btn-move">🎯 Focar Hoje</button></a>
-                        <a href="/delete/brain_dump/{{ loop.index0 }}"><button class="btn-action btn-delete">🗑️</button></a>
-                    </div>
-                </div>
-                {% endfor %}
-            </div>
-
-            <div class="column column-foco">
-                <h2>Foco de Hoje 🎯 <small style="font-size: 0.8rem; font-weight: normal; color: var(--accent-terracotta);">({{ dados.foco_hoje|length }}/3)</small></h2>
-                {% if dados.foco_hoje|length == 0 %}
-                    <p style="color: var(--text-muted); font-size: 0.9rem; font-style: italic;">Arraste tarefas para cá para começar o seu dia com tranquilidade.</p>
-                {% endif %}
-                {% for task in dados.foco_hoje %}
-                <div class="card">
-                    <p>{{ task }}</p>
-                    <div class="card-actions">
-                        <a href="/move/foco_hoje/concluido/{{ loop.index0 }}"><button class="btn-action btn-done">Feito! 🎉</button></a>
-                        <a href="/move/foco_hoje/brain_dump/{{ loop.index0 }}"><button class="btn-action btn-move">↩️ Devolver</button></a>
-                    </div>
-                </div>
-                {% endfor %}
-            </div>
-
-            <div class="column column-concluido">
-                <h2>Feito hoje 🎉</h2>
-                {% for task in dados.concluido %}
-                <div class="card">
-                    <p>{{ task }}</p>
-                    <div class="card-actions">
-                        <a href="/delete/concluido/{{ loop.index0 }}"><button class="btn-action btn-delete">Limpar</button></a>
-                    </div>
-                </div>
-                {% endfor %}
-            </div>
-        </main>
-    </div>
-
-    <!-- ABA 2: PLANEJADOR SMART (COMPLETO) -->
-    <div id="tab-smart" class="tab-content">
-        <div class="smart-container">
-            <div class="smart-header-guide">
-                <div class="smart-badge badge-s">S - Específica</div>
-                <div class="smart-badge badge-m">M - Mensurável</div>
-                <div class="smart-badge badge-a">A - Atingível</div>
-                <div class="smart-badge badge-r">R - Relevante</div>
-                <div class="smart-badge badge-t">T - Temporal</div>
-            </div>
-
-            <h2 style="margin-top:0; color: var(--accent-terracotta);">Definir Nova Meta SMART</h2>
-            <form action="/add_smart" method="POST" class="smart-form">
-                <div class="form-section">
-                    <h3>1. Definir a Meta</h3>
-                    <div class="form-group">
-                        <label for="goal_name">O que você quer alcançar? (Seja específico)</label>
-                        <input type="text" id="goal_name" name="goal_name" placeholder="Ex: Estabelecer rotina matinal saudável de 20 min" required>
-                    </div>
-                </div>
-
-                <div class="form-section">
-                    <h3>2. Passos Mensuráveis e Atingíveis</h3>
-                    <p style="font-size: 0.8rem; color: #777; margin: 0 0 10px 0;">Quebre em 2 passos rápidos para não sobrecarregar:</p>
-                    
-                    <div class="form-row">
-                        <div class="form-group">
-                            <label>Passo 1: Descrição</label>
-                            <input type="text" name="step1_desc" placeholder="Ex: Preparar roupas de treino na noite anterior" required>
-                        </div>
-                        <div class="form-group" style="max-width: 150px;">
-                            <label>Tempo Estimado</label>
-                            <input type="text" name="step1_time" placeholder="Ex: 5 min" required>
-                        </div>
-                        <div class="form-group" style="max-width: 150px;">
-                            <label>Prazo</label>
-                            <input type="text" name="step1_deadline" placeholder="Ex: Hoje à noite" required>
-                        </div>
-                    </div>
-
-                    <div class="form-row">
-                        <div class="form-group">
-                            <label>Passo 2: Descrição</label>
-                            <input type="text" name="step2_desc" placeholder="Ex: Alongamento leve ao acordar" required>
-                        </div>
-                        <div class="form-group" style="max-width: 150px;">
-                            <label>Tempo Estimado</label>
-                            <input type="text" name="step2_time" placeholder="Ex: 10 min" required>
-                        </div>
-                        <div class="form-group" style="max-width: 150px;">
-                            <label>Prazo</label>
-                            <input type="text" name="step2_deadline" placeholder="Ex: Amanhã 7:00" required>
-                        </div>
-                    </div>
-                </div>
-
-                <div class="form-section">
-                    <h3>3. Planejamento Preventivo (Essencial para TDAH)</h3>
-                    <div class="form-row">
-                        <div class="form-group">
-                            <label for="resources">Recursos Necessários</label>
-                            <textarea id="resources" name="resources" placeholder="Ex: Garrafa de água ao lado da cama, despertador longe da cama."></textarea>
-                        </div>
-                        <div class="form-group">
-                            <label for="obstacles">Possível Obstáculo</label>
-                            <textarea id="obstacles" name="obstacles" placeholder="Ex: Ficar no celular procrastinando ao acordar."></textarea>
-                        </div>
-                        <div class="form-group">
-                            <label for="plan_obstacles">Como superar esse Obstáculo?</label>
-                            <textarea id="plan_obstacles" name="plan_obstacles" placeholder="Ex: Colocar app blocker nas primeiras 2 horas do dia."></textarea>
-                        </div>
-                    </div>
-                </div>
-
-                <div class="form-section">
-                    <h3>4. Resultado Desejado</h3>
-                    <div class="form-row">
-                        <div class="form-group">
-                            <label for="success_measurement">Como medirá o sucesso?</label>
-                            <input type="text" id="success_measurement" name="success_measurement" placeholder="Ex: Sentir mais energia e completar 4 dias seguidos">
-                        </div>
-                        <div class="form-group">
-                            <label for="achieved_outcome">Resultado Esperado</label>
-                            <input type="text" id="achieved_outcome" name="achieved_outcome" placeholder="Ex: Iniciar o dia útil com clareza e sem pressa">
-                        </div>
-                    </div>
-                </div>
-
-                <button type="submit" class="btn-submit-smart">Salvar Meta SMART 🎯</button>
-            </form>
-
-            <div class="active-goals-list">
-                <h3 style="color: var(--accent-terracotta); border-bottom: 2px solid var(--accent-peach); padding-bottom: 5px;">Minhas Metas SMART Cadastradas</h3>
-                {% if dados.metas_smart|length == 0 %}
-                    <p style="font-style: italic; color: #777;">Nenhuma meta SMART cadastrada ainda. Que tal criar a primeira acima?</p>
-                {% endif %}
-                
-                {% for meta in dados.metas_smart %}
-                <div class="goal-item">
-                    <div class="goal-item-header">
-                        <h4 class="goal-title">{{ meta.goal_name }}</h4>
-                        <a href="/delete_smart/{{ loop.index0 }}"><button class="btn-action btn-delete">Excluir Meta</button></a>
-                    </div>
-
-                    <div style="margin-top: 10px;">
-                        <strong>Passos Práticos:</strong>
-                        <table class="steps-table">
-                            <thead>
-                                <tr>
-                                    <th>Ação</th>
-                                    <th>Tempo</th>
-                                    <th>Prazo</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                <tr>
-                                    <td>{{ meta.step1_desc }}</td>
-                                    <td>{{ meta.step1_time }}</td>
-                                    <td>{{ meta.step1_deadline }}</td>
-                                </tr>
-                                <tr>
-                                    <td>{{ meta.step2_desc }}</td>
-                                    <td>{{ meta.step2_time }}</td>
-                                    <td>{{ meta.step2_deadline }}</td>
-                                </tr>
-                            </tbody>
-                        </table>
-                    </div>
-
-                    <div class="goal-grid">
-                        <div class="goal-sub-box">
-                            <strong>Recursos & Apoios</strong>
-                            {{ meta.resources or "Nenhum cadastrado" }}
-                        </div>
-                        <div class="goal-sub-box">
-                            <strong>Plano Antifracasso (Obstáculo & Solução)</strong>
-                            <span style="color: #c94c4c; font-weight: 500;">Obs:</span> {{ meta.obstacles }} <br>
-                            <span style="color: #4c9fc9; font-weight: 500;">Solução:</span> {{ meta.plan_obstacles }}
-                        </div>
-                        <div class="goal-sub-box">
-                            <strong>Como medir o Sucesso</strong>
-                            {{ meta.success_measurement }}
-                        </div>
-                        <div class="goal-sub-box">
-                            <strong>Resultado Esperado</strong>
-                            {{ meta.achieved_outcome }}
-                        </div>
-                    </div>
-                </div>
-                {% endfor %}
-            </div>
-        </div>
-    </div>
-
-    <!-- ABA 3: FILMES E LEITURAS DO ANO -->
-    <div id="tab-midia" class="tab-content">
-        <div class="media-container">
-            <div>
-                <!-- Leituras do Ano -->
-                <div class="fin-column" style="background-color: var(--card-bg); border-radius:16px; padding:25px; border:1px solid var(--border-color);">
-                    <h2 class="shelf-title" style="color:var(--accent-terracotta); border-bottom:2px solid var(--accent-peach); padding-bottom:8px; margin-top:0; margin-bottom:20px; font-size:1.4rem;">📚 Leituras do Ano</h2>
-                    <form action="/add_media/livros" method="POST" class="shelf-form">
-                        <input type="text" name="titulo" placeholder="Título do livro..." required>
-                        <input type="text" name="autor" placeholder="Autor..." required>
-                        <select name="nota" required>
-                            <option value="" disabled selected>Dar nota...</option>
-                            <option value="5">⭐⭐⭐⭐⭐ (Favorito)</option>
-                            <option value="4">⭐⭐⭐⭐</option>
-                            <option value="3">⭐⭐⭐</option>
-                            <option value="2">⭐⭐</option>
-                            <option value="1">⭐</option>
-                        </select>
-                        <button type="submit">Adicionar</button>
-                    </form>
-
-                    <div style="margin-top: 15px;">
-                        {% if dados.livros|length == 0 %}
-                            <p style="font-style: italic; color: var(--text-muted);">Nenhum livro cadastrado ainda.</p>
-                        {% endif %}
-                        {% for livro in dados.livros %}
-                        <div class="media-item {% if livro.concluido %}concluido{% endif %}">
-                            <div>
-                                <a href="/toggle_media/livros/{{ loop.index0 }}" style="text-decoration: none; font-size: 1.2rem; margin-right: 10px;">
-                                    {% if livro.concluido %}✅{% else %}⬜{% endif %}
-                                </a>
-                                <span><strong>{{ livro.titulo }}</strong> - {{ livro.autor }}</span>
-                            </div>
-                            <div>
-                                <span class="stars">
-                                    {% for i in range(livro.nota|int) %}★{% endfor %}
-                                </span>
-                                <a href="/delete_media/livros/{{ loop.index0 }}" style="margin-left: 15px; text-decoration: none;">🗑️</a>
-                            </div>
-                        </div>
-                        {% endfor %}
-                    </div>
-                </div>
-
-                <!-- Filmes do Ano -->
-                <div class="fin-column" style="background-color: var(--card-bg); border-radius:16px; padding:25px; border:1px solid var(--border-color);">
-                    <h2 class="shelf-title" style="color:var(--accent-terracotta); border-bottom:2px solid var(--accent-peach); padding-bottom:8px; margin-top:0; margin-bottom:20px; font-size:1.4rem;">🎬 Filmes do Ano</h2>
-                    <form action="/add_media/filmes" method="POST" class="shelf-form">
-                        <input type="text" name="titulo" placeholder="Nome do filme..." required>
-                        <input type="text" name="autor" placeholder="Diretor / Gênero..." required>
-                        <select name="nota" required>
-                            <option value="" disabled selected>Dar nota...</option>
-                            <option value="5">⭐⭐⭐⭐⭐</option>
-                            <option value="4">⭐⭐⭐⭐</option>
-                            <option value="3">⭐⭐⭐</option>
-                            <option value="2">⭐⭐</option>
-                            <option value="1">⭐</option>
-                        </select>
-                        <button type="submit">Adicionar</button>
-                    </form>
-
-                    <div style="margin-top: 15px;">
-                        {% if dados.filmes|length == 0 %}
-                            <p style="font-style: italic; color: var(--text-muted);">Nenhum filme cadastrado ainda.</p>
-                        {% endif %}
-                        {% for filme in dados.filmes %}
-                        <div class="media-item {% if filme.concluido %}concluido{% endif %}">
-                            <div>
-                                <a href="/toggle_media/filmes/{{ loop.index0 }}" style="text-decoration: none; font-size: 1.2rem; margin-right: 10px;">
-                                    {% if filme.concluido %}✅{% else %}⬜{% endif %}
-                                </a>
-                                <span><strong>{{ filme.titulo }}</strong> - {{ filme.autor }}</span>
-                            </div>
-                            <div>
-                                <span class="stars">
-                                    {% for i in range(filme.nota|int) %}★{% endfor %}
-                                </span>
-                                <a href="/delete_media/filmes/{{ loop.index0 }}" style="margin-left: 15px; text-decoration: none;">🗑️</a>
-                            </div>
-                        </div>
-                        {% endfor %}
-                    </div>
-                </div>
-            </div>
-
-            <!-- Sidebar Info -->
-            <div class="media-sidebar">
-                <div class="stat-badge-box">
-                    <h3>Progresso de Leitura 📖</h3>
-                    <div class="stat-number">
-                        {% set lidos = dados.livros | selectattr('concluido', 'equalto', True) | list | length %}
-                        {{ lidos }} / {{ dados.meta_livros_quero }}
-                    </div>
-                    <p style="margin: 0; font-size: 0.85rem; color: var(--text-muted);">livros devorados este ano!</p>
-                    <form action="/update_goal/livros" method="POST" style="margin-top: 10px; display: flex; gap: 5px; justify-content: center;">
-                        <input type="number" name="goal" value="{{ dados.meta_livros_quero }}" style="width: 50px; text-align: center; border-radius: 4px; border: 1px solid var(--border-color);">
-                        <button type="submit" style="font-size: 0.75rem; border: none; background: var(--accent-terracotta); color: white; padding: 2px 8px; border-radius: 4px; cursor: pointer;">Mudar Meta</button>
-                    </form>
-                </div>
-
-                <div class="stat-badge-box" style="background: linear-gradient(135deg, #EADEC9 0%, #FAF6F0 100%);">
-                    <h3>Cinema & Pipoca 🍿</h3>
-                    <div class="stat-number">
-                        {% set assistidos = dados.filmes | selectattr('concluido', 'equalto', True) | list | length %}
-                        {{ assistidos }} / {{ dados.meta_filmes_quero }}
-                    </div>
-                    <p style="margin: 0; font-size: 0.85rem; color: var(--text-muted);">filmes assistidos!</p>
-                    <form action="/update_goal/filmes" method="POST" style="margin-top: 10px; display: flex; gap: 5px; justify-content: center;">
-                        <input type="number" name="goal" value="{{ dados.meta_filmes_quero }}" style="width: 50px; text-align: center; border-radius: 4px; border: 1px solid var(--border-color);">
-                        <button type="submit" style="font-size: 0.75rem; border: none; background: var(--accent-terracotta); color: white; padding: 2px 8px; border-radius: 4px; cursor: pointer;">Mudar Meta</button>
-                    </form>
-                </div>
-
-                <div class="top5-box">
-                    <h3>⭐ Top 5 Favoritos</h3>
-                    <ol class="top5-list">
-                        {% set favoritos = [] %}
-                        {% for l in dados.livros if l.nota == '5' %}
-                            {% set _ = favoritos.append("📖 " ~ l.titulo) %}
-                        {% endfor %}
-                        {% for f in dados.filmes if f.nota == '5' %}
-                            {% set _ = favoritos.append("🎬 " ~ f.titulo) %}
-                        {% endfor %}
-                        
-                        {% if favoritos|length == 0 %}
-                            <p style="font-size: 0.85rem; font-style: italic; color: var(--text-muted); padding: 0; margin: 0;">Dê nota de 5 estrelas para as suas mídias favoritas!</p>
-                        {% else %}
-                            {% for fav in favoritos[:5] %}
-                                <li>{{ fav }}</li>
-                            {% endfor %}
-                        {% endif %}
-                    </ol>
-                </div>
-
-                <div class="top5-box" style="background-color: #FFFDF9; border: 1px dashed var(--accent-terracotta);">
-                    <h3>📝 Insights & Reflexões</h3>
-                    <form action="/save_notes" method="POST">
-                        <textarea class="notes-textarea" name="anotacoes" placeholder="Escreva passagens marcantes...">{{ dados.anotacoes_midia }}</textarea>
-                        <button type="submit" class="btn-save-notes">Salvar Notas</button>
-                    </form>
-                </div>
-            </div>
-        </div>
-    </div>
-
-    <!-- ABA 4: CONTROLE FINANCEIRO -->
-    <div id="tab-financeiro" class="tab-content">
-        <div class="fin-layout">
-            <div>
-                <!-- ENTRADAS -->
-                <div class="fin-column">
-                    <h2 class="fin-title">📥 Entrada (Salário Líquido, Benefícios...)</h2>
-                    <form action="/add_financeiro/entradas" method="POST" class="fin-form">
-                        <input type="text" name="desc" placeholder="Ex: Salário, VR, Reembolso..." required>
-                        <input type="number" step="0.01" name="valor" placeholder="R$ 0,00" required>
-                        <button type="submit">+</button>
-                    </form>
-                    <div class="fin-list">
-                        {% for item in dados.entradas %}
-                        <div class="fin-item">
-                            <span>{{ item.desc }}</span>
-                            <span style="color: var(--accent-green); font-weight: bold;">R$ {{ "%.2f"|format(item.valor) }} <a href="/delete_financeiro/entradas/{{ loop.index0 }}" style="text-decoration:none; margin-left: 8px;">🗑️</a></span>
-                        </div>
-                        {% endfor %}
-                    </div>
-                </div>
-
-                <!-- GASTOS FIXOS -->
-                <div class="fin-column">
-                    <h2 class="fin-title">🏠 Gastos Fixos (Contas recorrentes)</h2>
-                    <form action="/add_financeiro/gastos_fixos" method="POST" class="fin-form">
-                        <input type="text" name="desc" placeholder="Ex: Luz, Internet, Aluguel..." required>
-                        <input type="number" step="0.01" name="valor" placeholder="R$ 0,00" required>
-                        <button type="submit">+</button>
-                    </form>
-                    <div class="fin-list">
-                        {% for item in dados.gastos_fixos %}
-                        <div class="fin-item">
-                            <span>{{ item.desc }}</span>
-                            <span style="color: var(--text-main);">R$ {{ "%.2f"|format(item.valor) }} <a href="/delete_financeiro/gastos_fixos/{{ loop.index0 }}" style="text-decoration:none; margin-left: 8px;">🗑️</a></span>
-                        </div>
-                        {% endfor %}
-                    </div>
-                </div>
-
-                <!-- GASTOS VARIÁVEIS -->
-                <div class="fin-column">
-                    <h2 class="fin-title">🛒 Gastos Variáveis (Cartão, Uber, Lazer...)</h2>
-                    <form action="/add_financeiro/gastos_variaveis" method="POST" class="fin-form">
-                        <input type="text" name="desc" placeholder="Ex: Mercado, Farmácia, Saídas..." required>
-                        <input type="number" step="0.01" name="valor" placeholder="R$ 0,00" required>
-                        <button type="submit">+</button>
-                    </form>
-                    <div class="fin-list">
-                        {% for item in dados.gastos_variaveis %}
-                        <div class="fin-item">
-                            <span>{{ item.desc }}</span>
-                            <span style="color: var(--text-main);">R$ {{ "%.2f"|format(item.valor) }} <a href="/delete_financeiro/gastos_variaveis/{{ loop.index0 }}" style="text-decoration:none; margin-left: 8px;">🗑️</a></span>
-                        </div>
-                        {% endfor %}
-                    </div>
-                </div>
-            </div>
-
-            <!-- Resumos e Filtro de Compras -->
-            <div class="media-sidebar">
-                <div class="resumo-box">
-                    <h3 class="resumo-title">📊 Resumo Mensal</h3>
-                    <div class="resumo-row">
-                        <span>Saldo Inicial (Mês Anterior):</span>
-                        <form action="/update_saldo_inicial" method="POST" style="display:flex; gap:5px;">
-                            <input type="number" step="0.01" name="saldo" value="{{ dados.saldo_inicial }}" style="width:70px; border-radius:4px; border:1px solid var(--border-color); text-align:center;">
-                            <button type="submit" style="font-size:0.7rem; background: var(--accent-terracotta); border:none; color:white; padding:2px 5px; border-radius:4px; cursor:pointer;">ok</button>
-                        </form>
-                    </div>
-
-                    {% set total_entradas = dados.entradas | map(attribute='valor') | sum %}
-                    {% set total_fixos = dados.gastos_fixos | map(attribute='valor') | sum %}
-                    {% set total_variaveis = dados.gastos_variaveis | map(attribute='valor') | sum %}
-                    {% set saldo_final = dados.saldo_inicial + total_entradas - (total_fixos + total_variaveis) %}
-
-                    <div class="resumo-row">
-                        <span>Total de Entradas (+):</span>
-                        <span style="color: var(--accent-green);">R$ {{ "%.2f"|format(total_entradas) }}</span>
-                    </div>
-                    <div class="resumo-row">
-                        <span>Gastos Fixos (-):</span>
-                        <span style="color: var(--accent-red);">R$ {{ "%.2f"|format(total_fixos) }}</span>
-                    </div>
-                    <div class="resumo-row">
-                        <span>Gastos Variáveis (-):</span>
-                        <span style="color: var(--accent-red);">R$ {{ "%.2f"|format(total_variaveis) }}</span>
-                    </div>
-
-                    {% if saldo_final >= 0 %}
-                    <div class="saldo-final-box saldo-positivo">
-                        Sobra no Final do Mês: <br>
-                        <strong>R$ {{ "%.2f"|format(saldo_final) }} 🎉</strong>
-                    </div>
-                    {% else %}
-                    <div class="saldo-final-box saldo-negativo">
-                        Falta no Final do Mês: <br>
-                        <strong>R$ {{ "%.2f"|format(saldo_final) }} ⚠️</strong>
-                    </div>
+    <!-- SESSÃO DE LOGIN/CADASTRO -->
+    {% if not session.get('user_id') %}
+        <div class="auth-container">
+            <h2 class="auth-title">🥇 OrganizaMente</h2>
+            <p style="font-size:0.85rem; color: var(--text-muted); margin-bottom: 20px;">Organização inteligente para mentes dinâmicas.</p>
+            
+            {% if request.args.get('register') %}
+                <!-- Tela de Cadastro -->
+                <form action="/register" method="POST" class="auth-form">
+                    <input type="text" name="username" class="auth-input" placeholder="Criar Usuário" required autocomplete="off">
+                    <input type="password" name="password" class="auth-input" placeholder="Criar Senha" required>
+                    <button type="submit" class="auth-btn">Criar Minha Conta ⚡</button>
+                </form>
+                <div class="auth-switch">Já tem conta? <a href="/">Fazer Login</a></div>
+            {% else %}
+                <!-- Tela de Login -->
+                <form action="/login" method="POST" class="auth-form">
+                    <input type="text" name="username" class="auth-input" placeholder="Usuário" required autocomplete="off">
+                    <input type="password" name="password" class="auth-input" placeholder="Senha" required>
+                    <button type="submit" class="auth-btn">Entrar no Espaço Calmo 🧠</button>
+                </form>
+                <div class="auth-switch">Novo por aqui? <a href="/?register=true">Criar uma Conta</a></div>
+            {% endif %}
+            
+            {% if request.args.get('error') %}
+                <p style="color: var(--accent-red); font-size:0.85rem; margin-top: 15px; font-weight:bold;">
+                    {% if request.args.get('error') == 'auth' %} Usuário ou senha incorretos!
+                    {% elif request.args.get('error') == 'exists' %} Este nome de usuário já está em uso!
                     {% endif %}
+                </p>
+            {% endif %}
+        </div>
+    {% else %}
+        
+        <!-- DASHBOARD MULTIUSUÁRIO AUTENTICADO -->
+        <header>
+            <h1>OrganizaMente 🥇</h1>
+            <a href="/logout" class="user-badge">Sair (@{{ session.get('username') }})</a>
+        </header>
+
+        <div class="nav-tabs">
+            <button class="tab-btn active" id="btn-diario" onclick="switchTab('diario')">⚡ Rotina</button>
+            <button class="tab-btn" id="btn-smart" onclick="switchTab('smart')">🎯 SMART</button>
+            <button class="tab-btn" id="btn-midia" onclick="switchTab('midia')">📚 Leituras</button>
+            <button class="tab-btn" id="btn-financeiro" onclick="switchTab('financeiro')">💰 Finanças</button>
+        </div>
+
+        <!-- ABA 1: ROTINA DIÁRIA -->
+        <div id="tab-diario" class="tab-content active">
+            <section class="quick-capture">
+                <form action="/add" method="POST">
+                    <input type="text" name="task_text" placeholder="Escreva e aperte Enviar..." required autocomplete="off">
+                    <button type="submit">Guardar</button>
+                </form>
+            </section>
+
+            <main class="board">
+                <!-- Esvaziar a Cabeça -->
+                <div class="column column-dump">
+                    <h2>📥 Esvaziar a Cabeça</h2>
+                    {% for task in dados.brain_dump %}
+                    <div class="card">
+                        <p>{{ task.texto }}</p>
+                        <div class="card-actions">
+                            <a href="/move/{{ task.id }}/foco_hoje"><button class="btn-action btn-move">🎯 Focar</button></a>
+                            <a href="/delete/{{ task.id }}"><button class="btn-action btn-delete">🗑️</button></a>
+                        </div>
+                    </div>
+                    {% endfor %}
                 </div>
 
-                <div class="filtro-impulso">
-                    <div class="filtro-box" style="border-color: var(--accent-peach);">
-                        <h3 style="color: var(--accent-terracotta);">🛍️ Quero (Desejo)</h3>
-                        <form action="/add_impulso/quero" method="POST">
-                            <input type="text" name="item" placeholder="Blusinha, gadget..." required>
-                            <button type="submit">+</button>
-                        </form>
-                        <ul style="padding-left:15px; margin:0; font-size:0.85rem;">
-                            {% for item in dados.quero %}
-                            <li style="margin-bottom:5px;">
-                                {{ item }} <a href="/delete_impulso/quero/{{ loop.index0 }}" style="text-decoration:none;">🗑️</a>
-                            </li>
-                            {% endfor %}
-                        </ul>
+                <!-- Foco de Hoje -->
+                <div class="column column-foco">
+                    <h2>🎯 Foco de Hoje ({{ dados.foco_hoje|length }}/3)</h2>
+                    {% if dados.foco_hoje|length == 0 %}
+                        <p style="color: var(--text-muted); font-size: 0.9rem; font-style: italic; padding: 10px 0;">Nenhum foco selecionado.</p>
+                    {% endif %}
+                    {% for task in dados.foco_hoje %}
+                    <div class="card">
+                        <p>{{ task.texto }}</p>
+                        <div class="card-actions">
+                            <a href="/move/{{ task.id }}/concluido"><button class="btn-action btn-done">Feito! 🎉</button></a>
+                            <a href="/move/{{ task.id }}/brain_dump"><button class="btn-action btn-move">↩️ Voltar</button></a>
+                        </div>
+                    </div>
+                    {% endfor %}
+                </div>
+
+                <!-- Concluído -->
+                <div class="column column-concluido">
+                    <h2>🎉 Concluído</h2>
+                    {% for task in dados.concluido %}
+                    <div class="card">
+                        <p>{{ task.texto }}</p>
+                        <div class="card-actions">
+                            <a href="/delete/{{ task.id }}"><button class="btn-action btn-delete">Limpar</button></a>
+                        </div>
+                    </div>
+                    {% endfor %}
+                </div>
+            </main>
+        </div>
+
+        <!-- ABA 2: PLANEJADOR SMART (VERSÃO COMPLETA E DETALHADA) -->
+        <div id="tab-smart" class="tab-content">
+            <div class="smart-container">
+                <div class="smart-header-guide">
+                    <div class="smart-badge badge-s">S - Específica</div>
+                    <div class="smart-badge badge-m">M - Mensurável</div>
+                    <div class="smart-badge badge-a">A - Atingível</div>
+                    <div class="smart-badge badge-r">R - Relevante</div>
+                    <div class="smart-badge badge-t">T - Temporal</div>
+                </div>
+
+                <h2 style="margin-top:0; color: var(--accent-terracotta);">Nova Meta SMART</h2>
+                <form action="/add_smart" method="POST" class="smart-form">
+                    <div class="form-section">
+                        <h3>1. Definir a Meta</h3>
+                        <div class="form-group">
+                            <label>O que você quer alcançar? (Seja específico)</label>
+                            <input type="text" name="goal_name" placeholder="Ex: Organizar closet para consignment" required>
+                        </div>
                     </div>
 
-                    <div class="filtro-box" style="border-color: var(--accent-green);">
-                        <h3 style="color: var(--accent-green);">📍 Preciso (Necessidade)</h3>
-                        <form action="/add_impulso/preciso" method="POST">
-                            <input type="text" name="item" placeholder="Lente óculos, conserto..." required>
-                            <button type="submit">+</button>
-                        </form>
-                        <ul style="padding-left:15px; margin:0; font-size:0.85rem;">
-                            {% for item in dados.preciso %}
-                            <li style="margin-bottom:5px;">
-                                {{ item }} <a href="/delete_impulso/preciso/{{ loop.index0 }}" style="text-decoration:none;">🗑️</a>
-                            </li>
-                            {% endfor %}
-                        </ul>
+                    <div class="form-section">
+                        <h3>2. Passos Mensuráveis</h3>
+                        <div class="form-group">
+                            <label>Passo 1 (Ação Física Prática):</label>
+                            <input type="text" name="step1_desc" placeholder="Ação" required>
+                        </div>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label>Tempo</label>
+                                <input type="text" name="step1_time" placeholder="30 min">
+                            </div>
+                            <div class="form-group">
+                                <label>Prazo</label>
+                                <input type="text" name="step1_deadline" placeholder="Sábado">
+                            </div>
+                        </div>
                     </div>
+
+                    <div class="form-section">
+                        <h3>3. Plano Antifracasso</h3>
+                        <div class="form-group">
+                            <label>Possível Obstáculo:</label>
+                            <textarea name="obstacles" placeholder="Ex: Ficar escolhendo demais e perder o foco..."></textarea>
+                        </div>
+                        <div class="form-group">
+                            <label>Como vou superar esse obstáculo?</label>
+                            <textarea name="plan_obstacles" placeholder="Ex: Definir despertador de 20 minutos por lote de roupa..."></textarea>
+                        </div>
+                    </div>
+
+                    <button type="submit" class="btn-submit-smart">Salvar Meta SMART 🎯</button>
+                </form>
+
+                <div class="active-goals-list">
+                    <h3 style="color: var(--accent-terracotta); border-bottom: 2px solid var(--accent-peach); padding-bottom: 5px;">Minhas Metas</h3>
+                    {% if dados.metas_smart|length == 0 %}
+                        <p style="font-style: italic; color: var(--text-muted);">Nenhuma meta SMART cadastrada ainda.</p>
+                    {% endif %}
+                    {% for meta in dados.metas_smart %}
+                    <div class="goal-item">
+                        <div class="goal-item-header">
+                            <h4 class="goal-title">{{ meta.goal_name }}</h4>
+                            <a href="/delete_smart/{{ meta.id }}"><button class="btn-action btn-delete">Excluir</button></a>
+                        </div>
+                        <div class="goal-grid">
+                            <div class="goal-sub-box">
+                                <strong>Passo Prático</strong>
+                                {{ meta.step1_desc }} ({{ meta.step1_time }}) - Prazo: {{ meta.step1_deadline }}
+                            </div>
+                            {% if meta.obstacles %}
+                            <div class="goal-sub-box">
+                                <strong>Plano Contra Obstáculos</strong>
+                                <span style="color: var(--accent-red)">Obs:</span> {{ meta.obstacles }} <br>
+                                <span style="color: var(--accent-green)">Plano:</span> {{ meta.plan_obstacles }}
+                            </div>
+                            {% endif %}
+                        </div>
+                    </div>
+                    {% endfor %}
                 </div>
             </div>
         </div>
-    </div>
+
+        <!-- ABA 3: FILMES E LEITURAS -->
+        <div id="tab-midia" class="tab-content">
+            <div class="fin-column">
+                <h2 class="fin-title">📚 Leituras e Filmes do Ano</h2>
+                <form action="/add_media" method="POST" class="shelf-form">
+                    <input type="text" name="titulo" placeholder="Título..." required>
+                    <input type="text" name="autor" placeholder="Autor / Diretor..." required>
+                    <select name="tipo" required>
+                        <option value="livros">Livro 📖</option>
+                        <option value="filmes">Filme 🎬</option>
+                    </select>
+                    <select name="nota" required>
+                        <option value="5">⭐⭐⭐⭐⭐</option>
+                        <option value="4">⭐⭐⭐⭐</option>
+                        <option value="3">⭐⭐⭐</option>
+                    </select>
+                    <button type="submit">Adicionar Mídia</button>
+                </form>
+
+                <div>
+                    {% for midia in dados.midias %}
+                    <div class="media-item">
+                        <span>
+                            <a href="/toggle_media/{{ midia.id }}" style="text-decoration:none; margin-right:8px;">
+                                {% if midia.concluido %}✅{% else %}⬜{% endif %}
+                            </a>
+                            {% if midia.tipo == 'livros' %}📖{% else %}🎬{% endif %}
+                            <strong style="{% if midia.concluido %}text-decoration:line-through; color:var(--text-muted);{% endif %}">{{ midia.titulo }}</strong>
+                        </span>
+                        <span>
+                            <span class="stars">{% for i in range(midia.nota) %}★{% endfor %}</span>
+                            <a href="/delete_media/{{ midia.id }}" style="text-decoration:none; margin-left:12px;">🗑️</a>
+                        </span>
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+
+        <!-- ABA 4: CONTROLE FINANCEIRO -->
+        <div id="tab-financeiro" class="tab-content">
+            <div class="resumo-box">
+                <h3 class="resumo-title">📊 Resumo Mensal</h3>
+                
+                <div class="resumo-row">
+                    <span>Saldo Inicial (Mês Anterior):</span>
+                    <form action="/update_saldo_inicial" method="POST" style="display:flex; gap:5px;">
+                        <input type="number" step="0.01" name="saldo" value="{{ dados.usuario.saldo_inicial }}" style="width:70px; border-radius:4px; border:1px solid var(--border-color); text-align:center;">
+                        <button type="submit" style="font-size:0.7rem; background: var(--accent-terracotta); border:none; color:white; padding:2px 5px; border-radius:4px;">ok</button>
+                    </form>
+                </div>
+
+                {% set total_entradas = dados.financeiro | selectattr('tipo', 'equalto', 'entradas') | map(attribute='valor') | sum %}
+                {% set total_fixos = dados.financeiro | selectattr('tipo', 'equalto', 'gastos_fixos') | map(attribute='valor') | sum %}
+                {% set total_variaveis = dados.financeiro | selectattr('tipo', 'equalto', 'gastos_variaveis') | map(attribute='valor') | sum %}
+                {% set saldo_final = dados.usuario.saldo_inicial + total_entradas - (total_fixos + total_variaveis) %}
+
+                <div class="resumo-row"><span>Total Entradas:</span><span style="color:var(--accent-green);">R$ {{ "%.2f"|format(total_entradas) }}</span></div>
+                <div class="resumo-row"><span>Gastos Fixos:</span><span style="color:var(--accent-red);">R$ {{ "%.2f"|format(total_fixos) }}</span></div>
+                <div class="resumo-row"><span>Gastos Variáveis:</span><span style="color:var(--accent-red);">R$ {{ "%.2f"|format(total_variaveis) }}</span></div>
+
+                {% if saldo_final >= 0 %}
+                <div class="saldo-final-box saldo-positivo">Sobra: R$ {{ "%.2f"|format(saldo_final) }} 🎉</div>
+                {% else %}
+                <div class="saldo-final-box saldo-negativo">Falta: R$ {{ "%.2f"|format(saldo_final) }} ⚠️</div>
+                {% endif %}
+            </div>
+
+            <!-- Adicionar Lançamento -->
+            <div class="fin-column">
+                <h2 class="fin-title">💸 Lançar Transação</h2>
+                <form action="/add_financeiro" method="POST" class="fin-form">
+                    <input type="text" name="desc" placeholder="Descrição..." required>
+                    <input type="number" step="0.01" name="valor" placeholder="Valor (R$)" required>
+                    <select name="tipo" required>
+                        <option value="entradas">Entrada (Salário, VR...) 📥</option>
+                        <option value="gastos_fixos">Gasto Fixo (Contas) 🏠</option>
+                        <option value="gastos_variaveis">Gasto Variável (Cartão...) 🛒</option>
+                    </select>
+                    <button type="submit">Salvar Registro</button>
+                </form>
+
+                <div class="fin-list">
+                    {% for item in dados.financeiro %}
+                    <div class="fin-item">
+                        <span>
+                            {% if item.tipo == 'entradas' %}📥{% elif item.tipo == 'gastos_fixos' %}🏠{% else %}🛒{% endif %}
+                            {{ item.descricao }}
+                        </span>
+                        <span style="font-weight:bold; {% if item.tipo == 'entradas' %}color:var(--accent-green);{% else %}color:var(--text-main);{% endif %}">
+                            R$ {{ "%.2f"|format(item.valor) }}
+                            <a href="/delete_financeiro/{{ item.id }}" style="text-decoration:none; margin-left:8px;">🗑️</a>
+                        </span>
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+
+            <!-- Quero vs Preciso -->
+            <div class="filtro-impulso">
+                <div class="filtro-box">
+                    <h3 style="color:var(--accent-terracotta)">🛍️ Quero (Desejo)</h3>
+                    <form action="/add_impulso/quero" method="POST">
+                        <input type="text" name="item" placeholder="Blusinha, fone..." required>
+                        <button type="submit">+</button>
+                    </form>
+                    <ul style="padding-left:15px; margin:0; font-size:0.85rem;">
+                        {% for item in dados.desejos if item.tipo == 'quero' %}
+                        <li style="margin-bottom:5px;">{{ item.item }} <a href="/delete_impulso/{{ item.id }}">🗑️</a></li>
+                        {% endfor %}
+                    </ul>
+                </div>
+
+                <div class="filtro-box">
+                    <h3 style="color:var(--accent-green)">📍 Preciso (Necessidade)</h3>
+                    <form action="/add_impulso/preciso" method="POST">
+                        <input type="text" name="item" placeholder="Lente do óculos, mercado..." required>
+                        <button type="submit">+</button>
+                    </form>
+                    <ul style="padding-left:15px; margin:0; font-size:0.85rem;">
+                        {% for item in dados.desejos if item.tipo == 'preciso' %}
+                        <li style="margin-bottom:5px;">{{ item.item }} <a href="/delete_impulso/{{ item.id }}">🗑️</a></li>
+                        {% endfor %}
+                    </ul>
+                </div>
+            </div>
+        </div>
+    {% endif %}
 
     <script>
         function switchTab(tabName) {
@@ -1187,182 +897,266 @@ HTML_TEMPLATE = '''
             document.getElementById('tab-' + tabName).classList.add('active');
             document.getElementById('btn-' + tabName).classList.add('active');
         }
+
+        if ('serviceWorker' in navigator) {
+            navigator.serviceWorker.register('/sw.js');
+        }
     </script>
 </body>
 </html>
 '''
 
+# --- ROTAS DE AUTENTICAÇÃO ---
+
 @app.route('/')
 def index():
-    dados = ler_dados()
+    if 'user_id' not in session:
+        return render_template_string(HTML_TEMPLATE, dados=None)
+    
+    user_id = session['user_id']
+    conn = obter_conexao()
+    
+    # Busca dados do usuário logado
+    usuario = conn.execute('SELECT * FROM usuarios WHERE id = ?', (user_id,)).fetchone()
+    
+    # Busca tarefas do usuário
+    tarefas_db = conn.execute('SELECT * FROM tarefas WHERE user_id = ?', (user_id,)).fetchall()
+    brain_dump = [t for t in tarefas_db if t['coluna'] == 'brain_dump']
+    foco_hoje = [t for t in tarefas_db if t['coluna'] == 'foco_hoje']
+    concluido = [t for t in tarefas_db if t['coluna'] == 'concluido']
+    
+    # Busca metas SMART
+    metas_smart = conn.execute('SELECT * FROM metas_smart WHERE user_id = ?', (user_id,)).fetchall()
+    
+    # Busca mídias
+    midias = conn.execute('SELECT * FROM mídias WHERE user_id = ?', (user_id,)).fetchall()
+    
+    # Busca financeiro
+    financeiro = conn.execute('SELECT * FROM financeiro WHERE user_id = ?', (user_id,)).fetchall()
+    
+    # Busca desejos (Quero vs Preciso)
+    desejos = conn.execute('SELECT * FROM desejos WHERE user_id = ?', (user_id,)).fetchall()
+    
+    conn.close()
+    
+    dados = {
+        "usuario": usuario,
+        "brain_dump": brain_dump,
+        "foco_hoje": foco_hoje,
+        "concluido": concluido,
+        "metas_smart": metas_smart,
+        "midias": midias,
+        "financeiro": financeiro,
+        "desejos": desejos,
+        "meta_livros_quero": usuario['meta_livros'],
+        "meta_filmes_quero": usuario['meta_filmes']
+    }
+    
     return render_template_string(HTML_TEMPLATE, dados=dados)
+
+@app.route('/login', methods=['POST'])
+def login():
+    username = request.form.get('username').strip().lower()
+    password = request.form.get('password')
+    
+    conn = obter_conexao()
+    user = conn.execute('SELECT * FROM usuarios WHERE username = ?', (username,)).fetchone()
+    conn.close()
+    
+    if user and user['password'] == hash_senha(password):
+        session['user_id'] = user['id']
+        session['username'] = user['username']
+        return redirect(url_for('index'))
+    else:
+        return redirect(url_for('index', error='auth'))
+
+@app.route('/register', methods=['POST'])
+def register():
+    username = request.form.get('username').strip().lower()
+    password = request.form.get('password')
+    
+    conn = obter_conexao()
+    # Verifica se já existe
+    existente = conn.execute('SELECT id FROM usuarios WHERE username = ?', (username,)).fetchone()
+    if existente:
+        conn.close()
+        return redirect(url_for('index', register=True, error='exists'))
+    
+    # Cria novo usuário
+    cursor = conn.cursor()
+    cursor.execute('INSERT INTO usuarios (username, password) VALUES (?, ?)', (username, hash_senha(password)))
+    conn.commit()
+    
+    # Faz login automático
+    user_id = cursor.lastrowid
+    conn.close()
+    
+    session['user_id'] = user_id
+    session['username'] = username
+    return redirect(url_for('index'))
+
+@app.route('/logout')
+def logout():
+    session.clear()
+    return redirect(url_for('index'))
+
+# --- ROTAS DE TAREFAS ---
 
 @app.route('/add', methods=['POST'])
 def add_task():
+    if 'user_id' not in session: return redirect(url_for('index'))
     task_text = request.form.get('task_text')
     if task_text:
-        dados = ler_dados()
-        dados['brain_dump'].append(task_text)
-        salvar_dados(dados)
+        conn = obter_conexao()
+        conn.execute('INSERT INTO tarefas (user_id, texto, coluna) VALUES (?, ?, ?)', (session['user_id'], task_text, 'brain_dump'))
+        conn.commit()
+        conn.close()
     return redirect(url_for('index'))
 
-@app.route('/move/<origem>/<destino>/<int:index>')
-def move_task(origem, destino, index):
-    dados = ler_dados()
-    try:
-        task = dados[origem].pop(index)
-        dados[destino].append(task)
-        salvar_dados(dados)
-    except IndexError:
-        pass
+@app.route('/move/<int:task_id>/<coluna>')
+def move_task(task_id, coluna):
+    if 'user_id' not in session: return redirect(url_for('index'))
+    conn = obter_conexao()
+    conn.execute('UPDATE tarefas SET coluna = ? WHERE id = ? AND user_id = ?', (coluna, task_id, session['user_id']))
+    conn.commit()
+    conn.close()
     return redirect(url_for('index'))
 
-@app.route('/delete/<coluna>/<int:index>')
-def delete_task(coluna, index):
-    dados = ler_dados()
-    try:
-        dados[coluna].pop(index)
-        salvar_dados(dados)
-    except IndexError:
-        pass
+@app.route('/delete/<int:task_id>')
+def delete_task(task_id):
+    if 'user_id' not in session: return redirect(url_for('index'))
+    conn = obter_conexao()
+    conn.execute('DELETE FROM tarefas WHERE id = ? AND user_id = ?', (task_id, session['user_id']))
+    conn.commit()
+    conn.close()
     return redirect(url_for('index'))
+
+# --- ROTAS SMART ---
 
 @app.route('/add_smart', methods=['POST'])
 def add_smart():
-    dados = ler_dados()
-    nova_meta = {
-        "goal_name": request.form.get("goal_name"),
-        "step1_desc": request.form.get("step1_desc"),
-        "step1_time": request.form.get("step1_time"),
-        "step1_deadline": request.form.get("step1_deadline"),
-        "step2_desc": request.form.get("step2_desc"),
-        "step2_time": request.form.get("step2_time"),
-        "step2_deadline": request.form.get("step2_deadline"),
-        "resources": request.form.get("resources"),
-        "obstacles": request.form.get("obstacles"),
-        "plan_obstacles": request.form.get("plan_obstacles"),
-        "success_measurement": request.form.get("success_measurement"),
-        "achieved_outcome": request.form.get("achieved_outcome")
-    }
-    dados['metas_smart'].append(nova_meta)
-    salvar_dados(dados)
+    if 'user_id' not in session: return redirect(url_for('index'))
+    conn = obter_conexao()
+    conn.execute('''
+        INSERT INTO metas_smart (user_id, goal_name, step1_desc, step1_time, step1_deadline)
+        VALUES (?, ?, ?, ?, ?)
+    ''', (session['user_id'], request.form.get("goal_name"), request.form.get("step1_desc"), request.form.get("step1_time"), request.form.get("step1_deadline")))
+    conn.commit()
+    conn.close()
     return redirect(url_for('index'))
 
-@app.route('/delete_smart/<int:index>')
-def delete_smart(index):
-    dados = ler_dados()
-    try:
-        dados['metas_smart'].pop(index)
-        salvar_dados(dados)
-    except IndexError:
-        pass
+@app.route('/delete_smart/<int:meta_id>')
+def delete_smart(meta_id):
+    if 'user_id' not in session: return redirect(url_for('index'))
+    conn = obter_conexao()
+    conn.execute('DELETE FROM metas_smart WHERE id = ? AND user_id = ?', (meta_id, session['user_id']))
+    conn.commit()
+    conn.close()
     return redirect(url_for('index'))
 
-@app.route('/add_media/<tipo>', methods=['POST'])
-def add_media(tipo):
-    dados = ler_dados()
-    nova_midia = {
-        "titulo": request.form.get("titulo"),
-        "autor": request.form.get("autor"),
-        "nota": request.form.get("nota"),
-        "concluido": False
-    }
-    if tipo in ['livros', 'filmes']:
-        dados[tipo].append(nova_midia)
-        salvar_dados(dados)
+# --- ROTAS DE FILMES/LIVROS ---
+
+@app.route('/add_media', methods=['POST'])
+def add_media():
+    if 'user_id' not in session: return redirect(url_for('index'))
+    conn = obter_conexao()
+    conn.execute('''
+        INSERT INTO mídias (user_id, titulo, autor, nota, tipo, concluido)
+        VALUES (?, ?, ?, ?, ?, 0)
+    ''', (session['user_id'], request.form.get("titulo"), request.form.get("autor"), int(request.form.get("nota")), request.form.get("tipo")))
+    conn.commit()
+    conn.close()
     return redirect(url_for('index'))
 
-@app.route('/toggle_media/<tipo>/<int:index>')
-def toggle_media(tipo, index):
-    dados = ler_dados()
-    try:
-        dados[tipo][index]["concluido"] = not dados[tipo][index]["concluido"]
-        salvar_dados(dados)
-    except (IndexError, KeyError):
-        pass
+@app.route('/toggle_media/<int:media_id>')
+def toggle_media(media_id):
+    if 'user_id' not in session: return redirect(url_for('index'))
+    conn = obter_conexao()
+    conn.execute('UPDATE mídias SET concluido = 1 - concluido WHERE id = ? AND user_id = ?', (media_id, session['user_id']))
+    conn.commit()
+    conn.close()
     return redirect(url_for('index'))
 
-@app.route('/delete_media/<tipo>/<int:index>')
-def delete_media(tipo, index):
-    dados = ler_dados()
-    try:
-        dados[tipo].pop(index)
-        salvar_dados(dados)
-    except (IndexError, KeyError):
-        pass
-    return redirect(url_for('index'))
-
-@app.route('/update_goal/<tipo>', methods=['POST'])
-def update_goal(tipo):
-    dados = ler_dados()
-    meta_val = request.form.get("goal")
-    if meta_val:
-        if tipo == 'livros':
-            dados["meta_livros_quero"] = int(meta_val)
-        elif tipo == 'filmes':
-            dados["meta_filmes_quero"] = int(meta_val)
-        salvar_dados(dados)
-    return redirect(url_for('index'))
-
-@app.route('/save_notes', methods=['POST'])
-def save_notes():
-    dados = ler_dados()
-    dados["anotacoes_midia"] = request.form.get("anotacoes")
-    salvar_dados(dados)
+@app.route('/delete_media/<int:media_id>')
+def delete_media(media_id):
+    if 'user_id' not in session: return redirect(url_for('index'))
+    conn = obter_conexao()
+    conn.execute('DELETE FROM mídias WHERE id = ? AND user_id = ?', (media_id, session['user_id']))
+    conn.commit()
+    conn.close()
     return redirect(url_for('index'))
 
 # --- ROTAS FINANCEIRAS ---
 
-@app.route('/add_financeiro/<tipo>', methods=['POST'])
-def add_financeiro(tipo):
-    dados = ler_dados()
-    desc = request.form.get("desc")
-    valor = request.form.get("valor")
-    if desc and valor and tipo in ['entradas', 'gastos_fixos', 'gastos_variaveis']:
-        dados[tipo].append({
-            "desc": desc,
-            "valor": float(valor)
-        })
-        salvar_dados(dados)
+@app.route('/add_financeiro', methods=['POST'])
+def add_financeiro():
+    if 'user_id' not in session: return redirect(url_for('index'))
+    conn = obter_conexao()
+    conn.execute('''
+        INSERT INTO financeiro (user_id, descricao, valor, tipo)
+        VALUES (?, ?, ?, ?)
+    ''', (session['user_id'], request.form.get("desc"), float(request.form.get("valor")), request.form.get("tipo")))
+    conn.commit()
+    conn.close()
     return redirect(url_for('index'))
 
-@app.route('/delete_financeiro/<tipo>/<int:index>')
-def delete_financeiro(tipo, index):
-    dados = ler_dados()
-    try:
-        dados[tipo].pop(index)
-        salvar_dados(dados)
-    except (IndexError, KeyError):
-        pass
+@app.route('/delete_financeiro/<int:fin_id>')
+def delete_financeiro(fin_id):
+    if 'user_id' not in session: return redirect(url_for('index'))
+    conn = obter_conexao()
+    conn.execute('DELETE FROM financeiro WHERE id = ? AND user_id = ?', (fin_id, session['user_id']))
+    conn.commit()
+    conn.close()
     return redirect(url_for('index'))
 
 @app.route('/update_saldo_inicial', methods=['POST'])
 def update_saldo_inicial():
-    dados = ler_dados()
+    if 'user_id' not in session: return redirect(url_for('index'))
     saldo = request.form.get("saldo")
     if saldo:
-        dados["saldo_inicial"] = float(saldo)
-        salvar_dados(dados)
+        conn = obter_conexao()
+        conn.execute('UPDATE usuarios SET saldo_inicial = ? WHERE id = ?', (float(saldo), session['user_id']))
+        conn.commit()
+        conn.close()
     return redirect(url_for('index'))
 
 @app.route('/add_impulso/<tipo>', methods=['POST'])
 def add_impulso(tipo):
-    dados = ler_dados()
+    if 'user_id' not in session: return redirect(url_for('index'))
     item = request.form.get("item")
     if item and tipo in ['quero', 'preciso']:
-        dados[tipo].append(item)
-        salvar_dados(dados)
+        conn = obter_conexao()
+        conn.execute('INSERT INTO desejos (user_id, item, tipo) VALUES (?, ?, ?)', (session['user_id'], item, tipo))
+        conn.commit()
+        conn.close()
     return redirect(url_for('index'))
 
-@app.route('/delete_impulso/<tipo>/<int:index>')
-def delete_impulso(tipo, index):
-    dados = ler_dados()
-    try:
-        dados[tipo].pop(index)
-        salvar_dados(dados)
-    except (IndexError, KeyError):
-        pass
+@app.route('/delete_impulso/<int:desejo_id>')
+def delete_impulso(desejo_id):
+    if 'user_id' not in session: return redirect(url_for('index'))
+    conn = obter_conexao()
+    conn.execute('DELETE FROM desejos WHERE id = ? AND user_id = ?', (desejo_id, session['user_id']))
+    conn.commit()
+    conn.close()
     return redirect(url_for('index'))
+
+# --- OUTROS ARQUIVOS ---
+
+@app.route('/manifest.json')
+def manifest():
+    return send_from_directory(os.getcwd(), 'manifest.json')
+
+@app.route('/sw.js')
+def service_worker():
+    sw_code = """
+    self.addEventListener('install', function(e) {
+        self.skipWaiting();
+    });
+    self.addEventListener('fetch', function(e) {
+        // Apenas repassa as requisições
+    });
+    """
+    return sw_code, 200, {'Content-Type': 'application/javascript'}
 
 if __name__ == '__main__':
-    app.run(debug=True, port=5000)
+    app.run(debug=True, host='0.0.0.0', port=5000)
