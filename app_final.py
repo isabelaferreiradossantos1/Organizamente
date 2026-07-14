@@ -1163,7 +1163,7 @@ def index():
         "metas_ano_count": metas_ano_count,
         "midias": midias,
         "financeiro": financeiro,
-        "desejos": deseos,
+        "desejos": desejos,
         "meta_livros_quero": usuario['meta_livros'],
         "meta_filmes_quero": usuario['meta_filmes'],
         "mes_atual": mes_atual,
