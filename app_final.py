@@ -3,13 +3,14 @@ from flask import Flask, render_template_string, request, redirect, url_for, ses
 import sqlite3
 import hashlib
 import os
+from datetime import datetime
 
 app = Flask(__name__)
 app.secret_key = 'chave_secreta_super_dopaminergica' # Requerido para gerenciar sessões de login
 
 DB_FILE = 'organizamente.db'
 
-# --- FUNÇÕES DE BANCO DE DE DADOS ---
+# --- FUNÇÕES DE BANCO DE DADOS ---
 
 def obter_conexao():
     conn = sqlite3.connect(DB_FILE)
@@ -26,14 +27,13 @@ def inicializar_banco():
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             username TEXT UNIQUE NOT NULL,
             password TEXT NOT NULL,
-            saldo_inicial REAL DEFAULT 0.0,
             anotacoes_midia TEXT DEFAULT '',
             meta_livros INTEGER DEFAULT 10,
             meta_filmes INTEGER DEFAULT 20
         )
     ''')
     
-    # Tabela de Tarefas (Brain Dump / Foco / Concluído)
+    # Tabela de Tarefas
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS tarefas (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -44,7 +44,7 @@ def inicializar_banco():
         )
     ''')
     
-    # Tabela de Metas SMART
+    # Tabela de Metas SMART (Com suporte a data REAL para prazos)
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS metas_smart (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -52,15 +52,9 @@ def inicializar_banco():
             goal_name TEXT NOT NULL,
             step1_desc TEXT,
             step1_time TEXT,
-            step1_deadline TEXT,
-            step2_desc TEXT,
-            step2_time TEXT,
-            step2_deadline TEXT,
-            resources TEXT,
+            step1_deadline TEXT, -- Armazenará no formato YYYY-MM-DD
             obstacles TEXT,
             plan_obstacles TEXT,
-            success_measurement TEXT,
-            achieved_outcome TEXT,
             FOREIGN KEY (user_id) REFERENCES usuarios (id) ON DELETE CASCADE
         )
     ''')
@@ -74,12 +68,12 @@ def inicializar_banco():
             autor TEXT,
             nota INTEGER,
             tipo TEXT NOT NULL, -- 'livros' ou 'filmes'
-            concluido INTEGER DEFAULT 0, -- 0 para Falso, 1 para Verdadeiro
+            concluido INTEGER DEFAULT 0,
             FOREIGN KEY (user_id) REFERENCES usuarios (id) ON DELETE CASCADE
         )
     ''')
     
-    # Tabela Financeira
+    # Tabela Financeira (Atualizada com colunas de mês e ano)
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS financeiro (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -87,17 +81,33 @@ def inicializar_banco():
             descricao TEXT NOT NULL,
             valor REAL NOT NULL,
             tipo TEXT NOT NULL, -- 'entradas', 'gastos_fixos', 'gastos_variaveis'
+            ano INTEGER NOT NULL,
+            mes INTEGER NOT NULL,
+            FOREIGN KEY (user_id) REFERENCES usuarios (id) ON DELETE CASCADE
+        )
+    ''')
+
+    # Tabela para configuração de Saldo Inicial manual por mês
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS saldos_iniciais (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            ano INTEGER NOT NULL,
+            mes INTEGER NOT NULL,
+            valor REAL DEFAULT 0.0,
+            UNIQUE(user_id, ano, mes),
             FOREIGN KEY (user_id) REFERENCES usuarios (id) ON DELETE CASCADE
         )
     ''')
     
-    # Tabela Quero vs Preciso
+    # Tabela Quero vs Preciso (Atualizada com coluna de valor previsto)
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS desejos (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             user_id INTEGER NOT NULL,
             item TEXT NOT NULL,
             tipo TEXT NOT NULL, -- 'quero' ou 'preciso'
+            valor_previsto REAL DEFAULT 0.0,
             FOREIGN KEY (user_id) REFERENCES usuarios (id) ON DELETE CASCADE
         )
     ''')
@@ -105,14 +115,51 @@ def inicializar_banco():
     conn.commit()
     conn.close()
 
-# Criptografia simples de senha para segurança básica
 def hash_senha(senha):
     return hashlib.sha256(senha.encode('utf-8')).hexdigest()
 
-# Inicializa o banco de dados antes do primeiro acesso
 inicializar_banco()
 
-# --- TEMPLATE HTML COMPLETO (Design Limpo e Minimalista sem Emojis no Topo/Abas) ---
+# --- HELPER FUNCTIONS ---
+
+def obter_sobra_mes(conn, user_id, ano, mes):
+    """Calcula recursivamente e com segurança a sobra líquida de um determinado mês."""
+    # Busca se há saldo inicial configurado manualmente para este mês específico
+    saldo_man = conn.execute(
+        'SELECT valor FROM saldos_iniciais WHERE user_id = ? AND ano = ? AND mes = ?', 
+        (user_id, ano, mes)
+    ).fetchone()
+
+    # Se houver um saldo inicial configurado manualmente, usa ele. Caso contrário, calcula dinamicamente baseado na sobra do mês anterior
+    if saldo_man:
+        saldo_inicial = saldo_man['valor']
+    else:
+        # Se for janeiro, o anterior é dezembro do ano anterior
+        if mes == 1:
+            prev_mes, prev_ano = 12, ano - 1
+        else:
+            prev_mes, prev_ano = mes - 1, ano
+
+        # Evita loops infinitos limitando a recursão para trás (limite de 2 anos)
+        hoje = datetime.now()
+        if (ano < hoje.year - 2):
+            saldo_inicial = 0.0
+        else:
+            saldo_inicial = obter_sobra_mes(conn, user_id, prev_ano, prev_mes)
+
+    # Soma as entradas e subtrai as saídas do mês consultado
+    transacoes = conn.execute(
+        'SELECT valor, tipo FROM financeiro WHERE user_id = ? AND ano = ? AND mes = ?',
+        (user_id, ano, mes)
+    ).fetchall()
+
+    entradas = sum(t['valor'] for t in transacoes if t['tipo'] == 'entradas')
+    fixos = sum(t['valor'] for t in transacoes if t['tipo'] == 'gastos_fixos')
+    variaveis = sum(t['valor'] for t in transacoes if t['tipo'] == 'gastos_variaveis')
+
+    return saldo_inicial + entradas - (fixos + variaveis)
+
+# --- TEMPLATE HTML COMPLETO ---
 HTML_TEMPLATE = '''
 <!DOCTYPE html>
 <html lang="pt-BR">
@@ -399,6 +446,38 @@ HTML_TEMPLATE = '''
             margin-bottom: 15px;
         }
 
+        /* Visualizador de Tempo / Dashboard de Metas */
+        .smart-dashboard {
+            display: flex;
+            gap: 12px;
+            margin-bottom: 20px;
+        }
+
+        .dashboard-card {
+            flex: 1;
+            background: linear-gradient(135deg, #FFF9F6, #FDF0EA);
+            border: 1px solid var(--accent-peach);
+            padding: 15px;
+            border-radius: 12px;
+            text-align: center;
+            box-shadow: 0 4px 6px rgba(212, 106, 67, 0.04);
+        }
+
+        .dashboard-card h4 {
+            margin: 0;
+            font-size: 0.8rem;
+            text-transform: uppercase;
+            color: var(--text-muted);
+            letter-spacing: 0.5px;
+        }
+
+        .dashboard-card .counter {
+            font-size: 2rem;
+            font-weight: 800;
+            color: var(--accent-terracotta);
+            margin: 8px 0 0 0;
+        }
+
         .smart-header-guide {
             display: grid;
             grid-template-columns: repeat(5, 1fr);
@@ -434,7 +513,7 @@ HTML_TEMPLATE = '''
 
         .form-group { display: flex; flex-direction: column; gap: 4px; margin-bottom: 8px; }
         .form-group label { font-size: 0.8rem; font-weight: 600; color: var(--text-muted); }
-        .form-group input, .form-group textarea {
+        .form-group input, .form-group textarea, .form-group select {
             padding: 10px;
             border: 1px solid var(--border-color);
             border-radius: 8px;
@@ -451,6 +530,7 @@ HTML_TEMPLATE = '''
             width: 100%;
             text-transform: uppercase;
             letter-spacing: 1px;
+            cursor: pointer;
         }
 
         .active-goals-list {
@@ -510,7 +590,7 @@ HTML_TEMPLATE = '''
             gap: 8px;
             margin-bottom: 15px;
         }
-        .fin-form input, .shelf-form input, .shelf-form select {
+        .fin-form input, .shelf-form input, .shelf-form select, .fin-form select {
             padding: 10px;
             border-radius: 8px;
             border: 1px solid var(--border-color);
@@ -525,6 +605,7 @@ HTML_TEMPLATE = '''
             font-weight: bold;
             text-transform: uppercase;
             letter-spacing: 1px;
+            cursor: pointer;
         }
 
         .fin-item, .media-item {
@@ -539,6 +620,7 @@ HTML_TEMPLATE = '''
         .resumo-row {
             display: flex;
             justify-content: space-between;
+            align-items: center;
             padding: 8px 0;
             font-weight: 500;
         }
@@ -599,6 +681,7 @@ HTML_TEMPLATE = '''
             padding: 8px 12px;
             border-radius: 6px;
             font-weight: bold;
+            cursor: pointer;
         }
 
         .top5-box {
@@ -615,15 +698,12 @@ HTML_TEMPLATE = '''
 </head>
 <body>
 
-    <!-- SESSÃO DE LOGIN/CADASTRO -->
     {% if not session.get('user_id') %}
         <div class="auth-container">
-            <!-- Logo minimalista sem emojis -->
             <h2 class="auth-title">ORGANIZA<span>MENTE</span></h2>
             <p style="font-size:0.85rem; color: var(--text-muted); margin-bottom: 20px; letter-spacing: 0.5px;">Organização inteligente para mentes dinâmicas.</p>
             
             {% if request.args.get('register') %}
-                <!-- Tela de Cadastro -->
                 <form action="/register" method="POST" class="auth-form">
                     <input type="text" name="username" class="auth-input" placeholder="Criar Usuário" required autocomplete="off">
                     <input type="password" name="password" class="auth-input" placeholder="Criar Senha" required>
@@ -631,7 +711,6 @@ HTML_TEMPLATE = '''
                 </form>
                 <div class="auth-switch">Já tem conta? <a href="/">Fazer Login</a></div>
             {% else %}
-                <!-- Tela de Login -->
                 <form action="/login" method="POST" class="auth-form">
                     <input type="text" name="username" class="auth-input" placeholder="Usuário" required autocomplete="off">
                     <input type="password" name="password" class="auth-input" placeholder="Senha" required>
@@ -650,7 +729,6 @@ HTML_TEMPLATE = '''
         </div>
     {% else %}
         
-        <!-- DASHBOARD MULTIUSUÁRIO AUTENTICADO -->
         <header>
             <h1>ORGANIZA<span>MENTE</span></h1>
             <a href="/logout" class="user-badge">SAIR (@{{ session.get('username') }})</a>
@@ -663,7 +741,6 @@ HTML_TEMPLATE = '''
             <button class="tab-btn" id="btn-financeiro" onclick="switchTab('financeiro')">Finanças</button>
         </div>
 
-        <!-- ABA 1: ROTINA DIÁRIA -->
         <div id="tab-diario" class="tab-content active">
             <section class="quick-capture">
                 <form action="/add" method="POST">
@@ -673,7 +750,6 @@ HTML_TEMPLATE = '''
             </section>
 
             <main class="board">
-                <!-- Esvaziar a Cabeça -->
                 <div class="column column-dump">
                     <h2>Esvaziar a Cabeça</h2>
                     {% for task in dados.brain_dump %}
@@ -687,7 +763,6 @@ HTML_TEMPLATE = '''
                     {% endfor %}
                 </div>
 
-                <!-- Foco de Hoje -->
                 <div class="column column-foco">
                     <h2>Foco de Hoje ({{ dados.foco_hoje|length }}/3)</h2>
                     {% if dados.foco_hoje|length == 0 %}
@@ -704,7 +779,6 @@ HTML_TEMPLATE = '''
                     {% endfor %}
                 </div>
 
-                <!-- Concluído -->
                 <div class="column column-concluido">
                     <h2>Concluído</h2>
                     {% for task in dados.concluido %}
@@ -719,9 +793,19 @@ HTML_TEMPLATE = '''
             </main>
         </div>
 
-        <!-- ABA 2: PLANEJADOR SMART -->
         <div id="tab-smart" class="tab-content">
             <div class="smart-container">
+                <div class="smart-dashboard">
+                    <div class="dashboard-card">
+                        <h4>Metas do Mês</h4>
+                        <p class="counter">{{ dados.metas_mes_count }}</p>
+                    </div>
+                    <div class="dashboard-card">
+                        <h4>Metas do Ano</h4>
+                        <p class="counter">{{ dados.metas_ano_count }}</p>
+                    </div>
+                </div>
+
                 <div class="smart-header-guide">
                     <div class="smart-badge badge-s">S</div>
                     <div class="smart-badge badge-m">M</div>
@@ -743,17 +827,17 @@ HTML_TEMPLATE = '''
                     <div class="form-section">
                         <h3>2. Passos Mensuráveis</h3>
                         <div class="form-group">
-                            <label>Passo 1 (Ação Física Prática):</label>
+                            <label>Passo 1 (Ação Prática):</label>
                             <input type="text" name="step1_desc" placeholder="Ação" required>
                         </div>
                         <div class="form-row" style="display: flex; gap: 8px; margin-top: 5px;">
                             <div class="form-group" style="flex: 1;">
                                 <label>Tempo</label>
-                                <input type="text" name="step1_time" placeholder="30 min">
+                                <input type="text" name="step1_time" placeholder="Ex: 1 hora">
                             </div>
                             <div class="form-group" style="flex: 1;">
                                 <label>Prazo</label>
-                                <input type="text" name="step1_deadline" placeholder="Sábado">
+                                <input type="date" name="step1_deadline" required>
                             </div>
                         </div>
                     </div>
@@ -787,7 +871,13 @@ HTML_TEMPLATE = '''
                         <div class="goal-grid">
                             <div class="goal-sub-box">
                                 <strong>Passo Prático</strong>
-                                {{ meta.step1_desc }} ({{ meta.step1_time }}) - Prazo: {{ meta.step1_deadline }}
+                                {{ meta.step1_desc }} ({{ meta.step1_time }}) - 
+                                Prazo: 
+                                {% if meta.step1_deadline %}
+                                    {{ meta.step1_deadline[8:10] }}/{{ meta.step1_deadline[5:7] }}/{{ meta.step1_deadline[0:4] }}
+                                {% else %}
+                                    Não definido
+                                {% endif %}
                             </div>
                             {% if meta.obstacles %}
                             <div class="goal-sub-box">
@@ -803,7 +893,6 @@ HTML_TEMPLATE = '''
             </div>
         </div>
 
-        <!-- ABA 3: FILMES E LEITURAS -->
         <div id="tab-midia" class="tab-content">
             <div class="fin-column">
                 <h2 class="fin-title" style="text-transform: uppercase; letter-spacing: 1px; font-size: 1.1rem;">Leituras e Filmes do Ano</h2>
@@ -841,39 +930,65 @@ HTML_TEMPLATE = '''
             </div>
         </div>
 
-        <!-- ABA 4: CONTROLE FINANCEIRO -->
         <div id="tab-financeiro" class="tab-content">
+            
+            <div class="resumo-box" style="margin-bottom:15px; border-color: var(--accent-peach);">
+                <h3 style="margin-top:0; color:var(--accent-terracotta); text-transform: uppercase; font-size:0.9rem; letter-spacing:0.5px;">Visualizar Mês Vigente</h3>
+                <form action="/selecionar_mes" method="POST" style="display:flex; gap:10px;">
+                    <select name="mes" style="flex:1; padding:8px; border-radius:8px; border:1px solid var(--border-color);">
+                        <option value="1" {% if dados.mes_atual == 1 %}selected{% endif %}>Janeiro</option>
+                        <option value="2" {% if dados.mes_atual == 2 %}selected{% endif %}>Fevereiro</option>
+                        <option value="3" {% if dados.mes_atual == 3 %}selected{% endif %}>Março</option>
+                        <option value="4" {% if dados.mes_atual == 4 %}selected{% endif %}>Abril</option>
+                        <option value="5" {% if dados.mes_atual == 5 %}selected{% endif %}>Maio</option>
+                        <option value="6" {% if dados.mes_atual == 6 %}selected{% endif %}>Junho</option>
+                        <option value="7" {% if dados.mes_atual == 7 %}selected{% endif %}>Julho</option>
+                        <option value="8" {% if dados.mes_atual == 8 %}selected{% endif %}>Agosto</option>
+                        <option value="9" {% if dados.mes_atual == 9 %}selected{% endif %}>Setembro</option>
+                        <option value="10" {% if dados.mes_atual == 10 %}selected{% endif %}>Outubro</option>
+                        <option value="11" {% if dados.mes_atual == 11 %}selected{% endif %}>Novembro</option>
+                        <option value="12" {% if dados.mes_atual == 12 %}selected{% endif %}>Dezembro</option>
+                    </select>
+                    <select name="ano" style="width:100px; padding:8px; border-radius:8px; border:1px solid var(--border-color);">
+                        <option value="2025" {% if dados.ano_atual == 2025 %}selected{% endif %}>2025</option>
+                        <option value="2026" {% if dados.ano_atual == 2026 %}selected{% endif %}>2026</option>
+                        <option value="2027" {% if dados.ano_atual == 2027 %}selected{% endif %}>2027</option>
+                    </select>
+                    <button type="submit" style="background:var(--accent-terracotta); border:none; color:white; padding:8px 15px; border-radius:8px; font-weight:bold; cursor:pointer;">Ir</button>
+                </form>
+            </div>
+
             <div class="resumo-box">
-                <h3 class="resumo-title" style="text-transform: uppercase; letter-spacing: 1px; font-size: 1.1rem;">Resumo Mensal</h3>
+                <h3 class="resumo-title" style="text-transform: uppercase; letter-spacing: 1px; font-size: 1.1rem; color: var(--accent-terracotta);">
+                    Resumo de {{ dados.nome_mes_atual }}/{{ dados.ano_atual }}
+                </h3>
                 
                 <div class="resumo-row">
                     <span>Saldo Inicial (Mês Anterior):</span>
                     <form action="/update_saldo_inicial" method="POST" style="display:flex; gap:5px;">
-                        <input type="number" step="0.01" name="saldo" value="{{ dados.usuario.saldo_inicial }}" style="width:70px; border-radius:4px; border:1px solid var(--border-color); text-align:center;">
-                        <button type="submit" style="font-size:0.7rem; background: var(--accent-terracotta); border:none; color:white; padding:2px 5px; border-radius:4px;">ok</button>
+                        <input type="hidden" name="mes" value="{{ dados.mes_atual }}">
+                        <input type="hidden" name="ano" value="{{ dados.ano_atual }}">
+                        <input type="number" step="0.01" name="saldo" value="{{ dados.saldo_inicial }}" style="width:75px; border-radius:4px; border:1px solid var(--border-color); text-align:center; padding: 4px;">
+                        <button type="submit" style="font-size:0.7rem; background: var(--accent-terracotta); border:none; color:white; padding:4px 8px; border-radius:4px; font-weight:bold; cursor:pointer;">ok</button>
                     </form>
                 </div>
 
-                {% set total_entradas = dados.financeiro | selectattr('tipo', 'equalto', 'entradas') | map(attribute='valor') | sum %}
-                {% set total_fixos = dados.financeiro | selectattr('tipo', 'equalto', 'gastos_fixos') | map(attribute='valor') | sum %}
-                {% set total_variaveis = dados.financeiro | selectattr('tipo', 'equalto', 'gastos_variaveis') | map(attribute='valor') | sum %}
-                {% set saldo_final = dados.usuario.saldo_inicial + total_entradas - (total_fixos + total_variaveis) %}
+                <div class="resumo-row"><span>Total Entradas:</span><span style="color:var(--accent-green); font-weight:bold;">R$ {{ "%.2f"|format(dados.total_entradas) }}</span></div>
+                <div class="resumo-row"><span>Gastos Fixos:</span><span style="color:var(--accent-red); font-weight:bold;">R$ {{ "%.2f"|format(dados.total_fixos) }}</span></div>
+                <div class="resumo-row"><span>Gastos Variáveis:</span><span style="color:var(--accent-red); font-weight:bold;">R$ {{ "%.2f"|format(dados.total_variaveis) }}</span></div>
 
-                <div class="resumo-row"><span>Total Entradas:</span><span style="color:var(--accent-green);">R$ {{ "%.2f"|format(total_entradas) }}</span></div>
-                <div class="resumo-row"><span>Gastos Fixos:</span><span style="color:var(--accent-red);">R$ {{ "%.2f"|format(total_fixos) }}</span></div>
-                <div class="resumo-row"><span>Gastos Variáveis:</span><span style="color:var(--accent-red);">R$ {{ "%.2f"|format(total_variaveis) }}</span></div>
-
-                {% if saldo_final >= 0 %}
-                <div class="saldo-final-box saldo-positivo">Sobra: R$ {{ "%.2f"|format(saldo_final) }}</div>
+                {% if dados.saldo_final >= 0 %}
+                <div class="saldo-final-box saldo-positivo">Sobra: R$ {{ "%.2f"|format(dados.saldo_final) }}</div>
                 {% else %}
-                <div class="saldo-final-box saldo-negativo">Falta: R$ {{ "%.2f"|format(saldo_final) }}</div>
+                <div class="saldo-final-box saldo-negativo">Falta: R$ {{ "%.2f"|format(dados.saldo_final) }}</div>
                 {% endif %}
             </div>
 
-            <!-- Adicionar Lançamento -->
             <div class="fin-column">
-                <h2 class="fin-title" style="text-transform: uppercase; letter-spacing: 1px; font-size: 1.1rem;">Lançar Transação</h2>
+                <h2 class="fin-title" style="text-transform: uppercase; letter-spacing: 1px; font-size: 1.1rem; color: var(--accent-terracotta);">Lançar Transação</h2>
                 <form action="/add_financeiro" method="POST" class="fin-form">
+                    <input type="hidden" name="mes" value="{{ dados.mes_atual }}">
+                    <input type="hidden" name="ano" value="{{ dados.ano_atual }}">
                     <input type="text" name="desc" placeholder="Descrição..." required>
                     <input type="number" step="0.01" name="valor" placeholder="Valor (R$)" required>
                     <select name="tipo" required>
@@ -887,9 +1002,7 @@ HTML_TEMPLATE = '''
                 <div class="fin-list">
                     {% for item in dados.financeiro %}
                     <div class="fin-item">
-                        <span>
-                            {{ item.descricao }}
-                        </span>
+                        <span>{{ item.descricao }}</span>
                         <span style="font-weight:bold; {% if item.tipo == 'entradas' %}color:var(--accent-green);{% else %}color:var(--text-main);{% endif %}">
                             R$ {{ "%.2f"|format(item.valor) }}
                             <a href="/delete_financeiro/{{ item.id }}" style="text-decoration:none; margin-left:8px;">Remover</a>
@@ -899,17 +1012,20 @@ HTML_TEMPLATE = '''
                 </div>
             </div>
 
-            <!-- Quero vs Preciso -->
             <div class="filtro-impulso">
                 <div class="filtro-box">
                     <h3 style="color:var(--accent-terracotta)">Quero (Desejo)</h3>
                     <form action="/add_impulso/quero" method="POST">
-                        <input type="text" name="item" placeholder="Blusinha, fone..." required>
+                        <input type="text" name="item" placeholder="Ex: Videgame" style="flex:2;" required>
+                        <input type="number" step="0.01" name="valor_previsto" placeholder="Previsão R$" style="flex:1;" required>
                         <button type="submit">+</button>
                     </form>
                     <ul style="padding-left:15px; margin:0; font-size:0.85rem;">
                         {% for item in dados.desejos if item.tipo == 'quero' %}
-                        <li style="margin-bottom:5px;">{{ item.item }} <a href="/delete_impulso/{{ item.id }}">Remover</a></li>
+                        <li style="margin-bottom:8px; display:flex; justify-content:space-between;">
+                            <span>{{ item.item }} <span style="color:var(--text-muted); font-style:italic;">(R$ {{ "%.2f"|format(item.valor_previsto) }})</span></span>
+                            <a href="/delete_impulso/{{ item.id }}" style="color:var(--accent-red); text-decoration:none;">Remover</a>
+                        </li>
                         {% endfor %}
                     </ul>
                 </div>
@@ -917,12 +1033,16 @@ HTML_TEMPLATE = '''
                 <div class="filtro-box">
                     <h3 style="color:var(--accent-green)">Preciso (Necessidade)</h3>
                     <form action="/add_impulso/preciso" method="POST">
-                        <input type="text" name="item" placeholder="Lente do óculos, mercado..." required>
+                        <input type="text" name="item" placeholder="Ex: Dentista" style="flex:2;" required>
+                        <input type="number" step="0.01" name="valor_previsto" placeholder="Previsão R$" style="flex:1;" required>
                         <button type="submit">+</button>
                     </form>
                     <ul style="padding-left:15px; margin:0; font-size:0.85rem;">
                         {% for item in dados.desejos if item.tipo == 'preciso' %}
-                        <li style="margin-bottom:5px;">{{ item.item }} <a href="/delete_impulso/{{ item.id }}">Remover</a></li>
+                        <li style="margin-bottom:8px; display:flex; justify-content:space-between;">
+                            <span>{{ item.item }} <span style="color:var(--text-muted); font-style:italic;">(R$ {{ "%.2f"|format(item.valor_previsto) }})</span></span>
+                            <a href="/delete_impulso/{{ item.id }}" style="color:var(--accent-red); text-decoration:none;">Remover</a>
+                        </li>
                         {% endfor %}
                     </ul>
                 </div>
@@ -959,6 +1079,11 @@ def index():
         return render_template_string(HTML_TEMPLATE, dados=None)
     
     user_id = session['user_id']
+    
+    # Gerencia mês e ano ativos da seção de controle
+    ano_atual = int(session.get('financeiro_ano', datetime.now().year))
+    mes_atual = int(session.get('financeiro_mes', datetime.now().month))
+    
     conn = obter_conexao()
     
     # Busca dados do usuário logado
@@ -971,16 +1096,60 @@ def index():
     concluido = [t for t in tarefas_db if t['coluna'] == 'concluido']
     
     # Busca metas SMART
-    metas_smart = conn.execute('SELECT * FROM metas_smart WHERE user_id = ?', (user_id,)).fetchall()
+    metas_smart = conn.execute('SELECT * FROM metas_smart WHERE user_id = ? ORDER BY step1_deadline ASC', (user_id,)).fetchall()
     
+    # Visualizador de Tempo / Dashboard das Metas SMART
+    hoje_data = datetime.now()
+    metas_mes_count = 0
+    metas_ano_count = 0
+    for meta in metas_smart:
+        if meta['step1_deadline']:
+            try:
+                dt_meta = datetime.strptime(meta['step1_deadline'], '%Y-%m-%d')
+                if dt_meta.year == hoje_data.year:
+                    metas_ano_count += 1
+                    if dt_meta.month == hoje_data.month:
+                        metas_mes_count += 1
+            except ValueError:
+                pass
+
     # Busca mídias
     midias = conn.execute('SELECT * FROM mídias WHERE user_id = ?', (user_id,)).fetchall()
     
-    # Busca financeiro
-    financeiro = conn.execute('SELECT * FROM financeiro WHERE user_id = ?', (user_id,)).fetchall()
+    # Busca financeiro FILTRADO por mês e ano vigentes
+    financeiro = conn.execute(
+        'SELECT * FROM financeiro WHERE user_id = ? AND ano = ? AND mes = ?', 
+        (user_id, ano_atual, mes_atual)
+    ).fetchall()
     
     # Busca desejos (Quero vs Preciso)
     desejos = conn.execute('SELECT * FROM desejos WHERE user_id = ?', (user_id,)).fetchall()
+    
+    # Lógica de Saldo Acumulado
+    saldo_man = conn.execute(
+        'SELECT valor FROM saldos_iniciais WHERE user_id = ? AND ano = ? AND mes = ?', 
+        (user_id, ano_atual, mes_atual)
+    ).fetchone()
+
+    if saldo_man:
+        saldo_inicial = saldo_man['valor']
+    else:
+        if mes_atual == 1:
+            prev_mes, prev_ano = 12, ano_atual - 1
+        else:
+            prev_mes, prev_ano = mes_atual - 1, ano_atual
+        
+        saldo_inicial = obter_sobra_mes(conn, user_id, prev_ano, prev_mes)
+
+    total_entradas = sum(f['valor'] for f in financeiro if f['tipo'] == 'entradas')
+    total_fixos = sum(f['valor'] for f in financeiro if f['tipo'] == 'gastos_fixos')
+    total_variaveis = sum(f['valor'] for f in financeiro if f['tipo'] == 'gastos_variaveis')
+    saldo_final = saldo_inicial + total_entradas - (total_fixos + total_variaveis)
+
+    meses_pt = {
+        1: "Janeiro", 2: "Fevereiro", 3: "Março", 4: "Abril", 5: "Maio", 6: "Junho",
+        7: "Julho", 8: "Agosto", 9: "Setembro", 10: "Outubro", 11: "Novembro", 12: "Dezembro"
+    }
     
     conn.close()
     
@@ -990,14 +1159,31 @@ def index():
         "foco_hoje": foco_hoje,
         "concluido": concluido,
         "metas_smart": metas_smart,
+        "metas_mes_count": metas_mes_count,
+        "metas_ano_count": metas_ano_count,
         "midias": midias,
         "financeiro": financeiro,
-        "desejos": desejos,
+        "desejos": deseos,
         "meta_livros_quero": usuario['meta_livros'],
-        "meta_filmes_quero": usuario['meta_filmes']
+        "meta_filmes_quero": usuario['meta_filmes'],
+        "mes_atual": mes_atual,
+        "ano_atual": ano_atual,
+        "nome_mes_atual": meses_pt.get(mes_atual, ""),
+        "saldo_inicial": saldo_inicial,
+        "total_entradas": total_entradas,
+        "total_fixos": total_fixos,
+        "total_variaveis": total_variaveis,
+        "saldo_final": saldo_final
     }
     
     return render_template_string(HTML_TEMPLATE, dados=dados)
+
+@app.route('/selecionar_mes', methods=['POST'])
+def selecionar_mes():
+    if 'user_id' not in session: return redirect(url_for('index'))
+    session['financeiro_mes'] = int(request.form.get("mes"))
+    session['financeiro_ano'] = int(request.form.get("ano"))
+    return redirect(url_for('index'))
 
 @app.route('/login', methods=['POST'])
 def login():
@@ -1011,6 +1197,9 @@ def login():
     if user and user['password'] == hash_senha(password):
         session['user_id'] = user['id']
         session['username'] = user['username']
+        # Seta o mês e ano vigentes para controle
+        session['financeiro_mes'] = datetime.now().month
+        session['financeiro_ano'] = datetime.now().year
         return redirect(url_for('index'))
     else:
         return redirect(url_for('index', error='auth'))
@@ -1021,23 +1210,22 @@ def register():
     password = request.form.get('password')
     
     conn = obter_conexao()
-    # Verifica se já existe
     existente = conn.execute('SELECT id FROM usuarios WHERE username = ?', (username,)).fetchone()
     if existente:
         conn.close()
         return redirect(url_for('index', register=True, error='exists'))
     
-    # Cria novo usuário
     cursor = conn.cursor()
     cursor.execute('INSERT INTO usuarios (username, password) VALUES (?, ?)', (username, hash_senha(password)))
     conn.commit()
     
-    # Faz login automático
     user_id = cursor.lastrowid
     conn.close()
     
     session['user_id'] = user_id
     session['username'] = username
+    session['financeiro_mes'] = datetime.now().month
+    session['financeiro_ano'] = datetime.now().year
     return redirect(url_for('index'))
 
 @app.route('/logout')
@@ -1083,9 +1271,17 @@ def add_smart():
     if 'user_id' not in session: return redirect(url_for('index'))
     conn = obter_conexao()
     conn.execute('''
-        INSERT INTO metas_smart (user_id, goal_name, step1_desc, step1_time, step1_deadline)
-        VALUES (?, ?, ?, ?, ?)
-    ''', (session['user_id'], request.form.get("goal_name"), request.form.get("step1_desc"), request.form.get("step1_time"), request.form.get("step1_deadline")))
+        INSERT INTO metas_smart (user_id, goal_name, step1_desc, step1_time, step1_deadline, obstacles, plan_obstacles)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+    ''', (
+        session['user_id'], 
+        request.form.get("goal_name"), 
+        request.form.get("step1_desc"), 
+        request.form.get("step1_time"), 
+        request.form.get("step1_deadline"),
+        request.form.get("obstacles"),
+        request.form.get("plan_obstacles")
+    ))
     conn.commit()
     conn.close()
     return redirect(url_for('index'))
@@ -1136,11 +1332,13 @@ def delete_media(media_id):
 @app.route('/add_financeiro', methods=['POST'])
 def add_financeiro():
     if 'user_id' not in session: return redirect(url_for('index'))
+    mes = int(request.form.get("mes"))
+    ano = int(request.form.get("ano"))
     conn = obter_conexao()
     conn.execute('''
-        INSERT INTO financeiro (user_id, descricao, valor, tipo)
-        VALUES (?, ?, ?, ?)
-    ''', (session['user_id'], request.form.get("desc"), float(request.form.get("valor")), request.form.get("tipo")))
+        INSERT INTO financeiro (user_id, descricao, valor, tipo, ano, mes)
+        VALUES (?, ?, ?, ?, ?, ?)
+    ''', (session['user_id'], request.form.get("desc"), float(request.form.get("valor")), request.form.get("tipo"), ano, mes))
     conn.commit()
     conn.close()
     return redirect(url_for('index'))
@@ -1158,9 +1356,17 @@ def delete_financeiro(fin_id):
 def update_saldo_inicial():
     if 'user_id' not in session: return redirect(url_for('index'))
     saldo = request.form.get("saldo")
+    mes = int(request.form.get("mes"))
+    ano = int(request.form.get("ano"))
+    
     if saldo:
         conn = obter_conexao()
-        conn.execute('UPDATE usuarios SET saldo_inicial = ? WHERE id = ?', (float(saldo), session['user_id']))
+        # Insere ou atualiza o saldo inicial manual configurado para o respectivo mês/ano
+        conn.execute('''
+            INSERT INTO saldos_iniciais (user_id, ano, mes, valor)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(user_id, ano, mes) DO UPDATE SET valor = excluded.valor
+        ''', (session['user_id'], ano, mes, float(saldo)))
         conn.commit()
         conn.close()
     return redirect(url_for('index'))
@@ -1169,9 +1375,13 @@ def update_saldo_inicial():
 def add_impulso(tipo):
     if 'user_id' not in session: return redirect(url_for('index'))
     item = request.form.get("item")
+    valor = request.form.get("valor_previsto")
     if item and tipo in ['quero', 'preciso']:
         conn = obter_conexao()
-        conn.execute('INSERT INTO desejos (user_id, item, tipo) VALUES (?, ?, ?)', (session['user_id'], item, tipo))
+        conn.execute('''
+            INSERT INTO desejos (user_id, item, tipo, valor_previsto) 
+            VALUES (?, ?, ?, ?)
+        ''', (session['user_id'], item, tipo, float(valor) if valor else 0.0))
         conn.commit()
         conn.close()
     return redirect(url_for('index'))
