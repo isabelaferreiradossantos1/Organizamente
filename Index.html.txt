@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Lançamento de Atividades</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-slate-100 font-sans min-h-screen p-4 md:p-6 text-slate-700">
+
+    <div class="max-w-7xl mx-auto space-y-6">
+
+        <!-- Bloco de Lançamento de Atividade -->
+        <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-5">
+            <h2 class="text-base font-bold text-slate-800 mb-4 flex items-center gap-2">
+                📝 Lançamento de Atividade
+            </h2>
+            
+            <form id="form-registro" class="space-y-4">
+                <input type="hidden" id="edit-index" value="-1">
+                
+                <div class="grid grid-cols-1 md:grid-cols-5 gap-4">
+                    <div>
+                        <label class="block text-[11px] font-bold uppercase text-slate-500 mb-1 tracking-wider">Data</label>
+                        <input type="date" id="input-data" required class="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:border-blue-500 text-sm">
+                    </div>
+                    <div class="md:col-span-2">
+                        <label class="block text-[11px] font-bold uppercase text-slate-500 mb-1 tracking-wider">Frente (Projeto/Rotina)</label>
+                        <select id="select-frente" required class="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:border-blue-500 text-sm">
+                            <!-- Inserido via JS -->
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block text-[11px] font-bold uppercase text-slate-500 mb-1 tracking-wider">Categoria</label>
+                        <select id="select-categoria" required class="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:border-blue-500 text-sm">
+                            <!-- Inserido via JS -->
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block text-[11px] font-bold uppercase text-slate-500 mb-1 tracking-wider">Status</label>
+                        <select id="select-status" required class="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:border-blue-500 text-sm">
+                            <!-- Inserido via JS -->
+                        </select>
+                    </div>
+                </div>
+
+                <div class="grid grid-cols-1 md:grid-cols-5 gap-4 items-end">
+                    <div class="md:col-span-3">
+                        <label class="block text-[11px] font-bold uppercase text-slate-500 mb-1 tracking-wider">Descrição da Tarefa</label>
+                        <input type="text" id="input-descricao" required class="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:border-blue-500 text-sm" placeholder="Descreva as ações, tags ou SPNs trabalhados...">
+                    </div>
+                    <div>
+                        <label class="block text-[11px] font-bold uppercase text-slate-500 mb-1 tracking-wider">Horas Gastas</label>
+                        <input type="number" id="input-horas" step="0.5" min="0" required class="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:border-blue-500 text-sm" placeholder="Ex: 8.0">
+                    </div>
+                    <div>
+                        <button type="submit" id="btn-salvar" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-lg text-sm transition duration-150">
+                            Salvar Registro
+                        </button>
+                    </div>
+                </div>
+            </form>
+        </div>
+
+        <!-- Bloco de Histórico -->
+        <div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+            <div class="bg-slate-800 text-white px-5 py-3 font-bold text-xs uppercase tracking-wider flex justify-between items-center">
+                <span>Histórico de Lançamentos Recentes</span>
+                <span class="text-[10px] text-slate-400 font-normal normal-case italic">💡 Clique no Status na tabela para alternar rápido</span>
+            </div>
+            
+            <div class="overflow-x-auto">
+                <table class="w-full text-left border-collapse text-xs">
+                    <thead>
+                        <tr class="bg-slate-50 text-slate-400 uppercase text-[10px] font-bold border-b border-slate-200">
+                            <th class="py-3 px-4">Data</th>
+                            <th class="py-3 px-4">Frente</th>
+                            <th class="py-3 px-4">Descrição da Tarefa</th>
+                            <th class="py-3 px-4">Categoria</th>
+                            <th class="py-3 px-4">Status</th>
+                            <th class="py-3 px-4">Horas</th>
+                            <th class="py-3 px-4 text-center">Ações</th>
+                        </tr>
+                    </thead>
+                    <tbody id="lista-registros" class="divide-y divide-slate-200 text-slate-700">
+                        <!-- Itens entram via JavaScript -->
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+    </div>
+
+    <script>
+        // Configurações do Sistema
+        const configuracoes = {
+            frentes: [
+                "Rotina: Adição de Material ao Estoque",
+                "Rotina: Disponibilização de Material para Embarque",
+                "Rotina: Transferências de Materiais",
+                "Rotina: Descarte de Materiais",
+                "Projeto: Estoque Centralizado",
+                "Projeto: Implantação iDutto / Integração TMMaster",
+                "Gestão de Equipe & Governança",
+                "Suporte / Outros"
+            ],
+            categorias: [
+                "Estratégico / Planejamento",
+                "Rotina Operacional",
+                "Urgência / Reativo"
+            ],
+            status: [
+                "A fazer",
+                "Em Andamento",
+                "Impedido / Aguardando Terceiros",
+                "Concluído"
+            ]
+        };
+
+        let registros = JSON.parse(localStorage.getItem('atividades_registros')) || [
+            // Registro padrão inicial caso esteja limpo (igual ao seu print)
+            {
+                data: "2026-07-13",
+                frente: "Projeto: Estoque Centralizado",
+                descricao: "Acompanhamento do plano para o estoque centralizado",
+                categoria: "Estratégico / Planejamento",
+                status: "Em Andamento",
+                horas: "2.0"
+            }
+        ];
+
+        // Inicializa as opções dos menus suspensos (Selects)
+        function carregarSelects() {
+            const fSel = document.getElementById('select-frente');
+            const cSel = document.getElementById('select-categoria');
+            const sSel = document.getElementById('select-status');
+
+            configuracoes.frentes.forEach(f => fSel.innerHTML += `<option value="${f}">${f}</option>`);
+            configuracoes.categorias.forEach(c => cSel.innerHTML += `<option value="${c}">${c}</option>`);
+            configuracoes.status.forEach(s => sSel.innerHTML += `<option value="${s}">${s}</option>`);
+
+            document.getElementById('input-data').value = new Date().toISOString().split('T')[0];
+        }
+
+        // Renderiza a Tabela na Tela
+        function renderizarTabela() {
+            const tbody = document.getElementById('lista-registros');
+            tbody.innerHTML = '';
+
+            registros.forEach((reg, index) => {
+                const dataBR = reg.data.split('-').reverse().join('/');
+
+                // Estilização das tags de status
+                let statusStyle = "bg-slate-100 text-slate-700";
+                if (reg.status === "Em Andamento") statusStyle = "bg-amber-100 text-amber-800 font-semibold px-2 py-0.5 rounded";
+                if (reg.status === "Concluído") statusStyle = "bg-green-100 text-green-800 font-semibold px-2 py-0.5 rounded";
+                if (reg.status === "Impedido / Aguardando Terceiros") statusStyle = "bg-red-100 text-red-800 font-semibold px-2 py-0.5 rounded";
+
+                const tr = document.createElement('tr');
+                tr.className = "hover:bg-slate-50 transition duration-75";
+                tr.innerHTML = `
+                    <td class="py-3 px-4 whitespace-nowrap text-slate-500">${dataBR}</td>
+                    <td class="py-3 px-4 font-bold text-slate-800">${reg.frente}</td>
+                    <td class="py-3 px-4 text-slate-600 max-w-sm break-words">${reg.descricao}</td>
+                    <td class="py-3 px-4 text-slate-500">${reg.categoria}</td>
+                    <td class="py-3 px-4">
+                        <button onclick="alternarStatusRapido(${index})" class="${statusStyle} hover:opacity-80 transition shadow-sm border border-transparent cursor-pointer text-[11px]">
+                            ${reg.status} 🔄
+                        </button>
+                    </td>
+                    <td class="py-3 px-4 font-bold text-slate-800">${parseFloat(reg.horas).toFixed(1)}</td>
+                    <td class="py-3 px-4 text-center whitespace-nowrap">
+                        <button onclick="prepararEdicao(${index})" class="text-blue-600 hover:text-blue-900 font-bold mr-3 transition">Editar</button>
+                        <button onclick="removerRegistro(${index})" class="text-red-500 hover:text-red-700 font-semibold transition">Remover</button>
+                    </td>
+                `;
+                tbody.appendChild(tr);
+            });
+
+            localStorage.setItem('atividades_registros', JSON.stringify(registros));
+        }
+
+        // AÇÃO 1: Clique rápido no status direto na linha
+        function alternarStatusRapido(index) {
+            const atualIdx = configuracoes.status.indexOf(registros[index].status);
+            const proximoIdx = (atualIdx + 1) % configuracoes.status.length;
+            registros[index].status = configuracoes.status[proximoIdx];
+            
+            // Se o item alterado estava carregado no painel de edição, atualiza o select também
+            if (parseInt(document.getElementById('edit-index').value) === index) {
+                document.getElementById('select-status').value = registros[index].status;
+            }
+            renderizarTabela();
+        }
+
+        // AÇÃO 2: Trazer dados de volta ao formulário para Editar completo
+        function ajustarFormularioUI(modoEdicao) {
+            const btn = document.getElementById('btn-salvar');
+            if (modoEdicao) {
+                btn.innerText = "Atualizar Registro";
+                btn.className = "w-full bg-amber-500 hover:bg-amber-600 text-white font-bold py-2 px-4 rounded-lg text-sm transition duration-150";
+            } else {
+                btn.innerText = "Salvar Registro";
+                btn.className = "w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-lg text-sm transition duration-150";
+            }
+        }
+
+        function prepararEdicao(index) {
+            const reg = registros[index];
+            document.getElementById('edit-index').value = index;
+            document.getElementById('input-data').value = reg.data;
+            document.getElementById('select-frente').value = reg.frente;
+            document.getElementById('select-categoria').value = reg.categoria;
+            document.getElementById('select-status').value = reg.status;
+            document.getElementById('input-descricao').value = reg.descricao;
+            document.getElementById('input-horas').value = reg.horas;
+
+            ajustarFormularioUI(true);
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+        }
+
+        // Captura do Envio do Formulário (Salvar Novo ou Atualizar)
+        document.getElementById('form-registro').addEventListener('submit', function(e) {
+            e.preventDefault();
+            const idx = parseInt(document.getElementById('edit-index').value);
+
+            const dados = {
+                data: document.getElementById('input-data').value,
+                frente: document.getElementById('select-frente').value,
+                categoria: document.getElementById('select-categoria').value,
+                status: document.getElementById('select-status').value,
+                descricao: document.getElementById('input-descricao').value,
+                horas: document.getElementById('input-horas').value
+            };
+
+            if (idx === -1) {
+                registros.push(dados);
+            } else {
+                registros[idx] = dados;
+                document.getElementById('edit-index').value = "-1";
+                ajustarFormularioUI(false);
+            }
+
+            document.getElementById('input-descricao').value = '';
+            document.getElementById('input-horas').value = '';
+            renderizarTabela();
+        });
+
+        // AÇÃO 3: Remover Registro
+        function removerRegistro(index) {
+            if (confirm("Deseja realmente remover esta atividade?")) {
+                registros.splice(index, 1);
+                if (parseInt(document.getElementById('edit-index').value) === index) {
+                    document.getElementById('edit-index').value = "-1";
+                    ajustarFormularioUI(false);
+                    document.getElementById('form-registro').reset();
+                }
+                renderizarTabela();
+            }
+        }
+
+        // Execução Inicial
+        carregarSelects();
+        renderizarTabela();
+    </script>
+</body>
+</html>
