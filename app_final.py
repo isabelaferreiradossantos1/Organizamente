@@ -572,7 +572,7 @@ HTML_TEMPLATE = '''
     <!-- SESSÃO DE LOGIN/CADASTRO -->
     {% if not session.get('user_id') %}
         <div class="auth-container">
-            <h2 class="auth-title">🥇 OrganizaMente</h2>
+            <h2 class="auth-title" style="letter-spacing: 2px; font-weight: 800; text-transform: uppercase; font-size: 1.6rem;">ORGANIZA<span style="color: var(--accent-peach);">MENTE</span></h2>
             <p style="font-size:0.85rem; color: var(--text-muted); margin-bottom: 20px;">Organização inteligente para mentes dinâmicas.</p>
             
             {% if request.args.get('register') %}
