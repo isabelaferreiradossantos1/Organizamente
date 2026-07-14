@@ -29,7 +29,9 @@ def inicializar_banco():
             password TEXT NOT NULL,
             anotacoes_midia TEXT DEFAULT '',
             meta_livros INTEGER DEFAULT 10,
-            meta_filmes INTEGER DEFAULT 20
+            meta_filmes INTEGER DEFAULT 20,
+            copos_agua INTEGER DEFAULT 0,
+            exercicio_feito INTEGER DEFAULT 0
         )
     ''')
     
@@ -39,12 +41,12 @@ def inicializar_banco():
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             user_id INTEGER NOT NULL,
             texto TEXT NOT NULL,
-            coluna TEXT NOT NULL, -- 'brain_dump', 'foco_hoje', 'concluido'
+            coluna TEXT NOT NULL,
             FOREIGN KEY (user_id) REFERENCES usuarios (id) ON DELETE CASCADE
         )
     ''')
     
-    # Tabela de Metas SMART (Com suporte a data REAL para prazos)
+    # Tabela de Metas SMART
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS metas_smart (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -52,7 +54,7 @@ def inicializar_banco():
             goal_name TEXT NOT NULL,
             step1_desc TEXT,
             step1_time TEXT,
-            step1_deadline TEXT, -- Armazenará no formato YYYY-MM-DD
+            step1_deadline TEXT,
             obstacles TEXT,
             plan_obstacles TEXT,
             FOREIGN KEY (user_id) REFERENCES usuarios (id) ON DELETE CASCADE
@@ -67,27 +69,27 @@ def inicializar_banco():
             titulo TEXT NOT NULL,
             autor TEXT,
             nota INTEGER,
-            tipo TEXT NOT NULL, -- 'livros' ou 'filmes'
+            tipo TEXT NOT NULL,
             concluido INTEGER DEFAULT 0,
             FOREIGN KEY (user_id) REFERENCES usuarios (id) ON DELETE CASCADE
         )
     ''')
     
-    # Tabela Financeira (Atualizada com colunas de mês e ano)
+    # Tabela Financeira
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS financeiro (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             user_id INTEGER NOT NULL,
             descricao TEXT NOT NULL,
             valor REAL NOT NULL,
-            tipo TEXT NOT NULL, -- 'entradas', 'gastos_fixos', 'gastos_variaveis'
+            tipo TEXT NOT NULL,
             ano INTEGER NOT NULL,
             mes INTEGER NOT NULL,
             FOREIGN KEY (user_id) REFERENCES usuarios (id) ON DELETE CASCADE
         )
     ''')
 
-    # Tabela para configuração de Saldo Inicial manual por mês
+    # Tabela de Saldo Inicial por Mês
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS saldos_iniciais (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -100,14 +102,28 @@ def inicializar_banco():
         )
     ''')
     
-    # Tabela Quero vs Preciso (Atualizada com coluna de valor previsto)
+    # Tabela Quero vs Preciso
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS desejos (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             user_id INTEGER NOT NULL,
             item TEXT NOT NULL,
-            tipo TEXT NOT NULL, -- 'quero' ou 'preciso'
+            tipo TEXT NOT NULL,
             valor_previsto REAL DEFAULT 0.0,
+            FOREIGN KEY (user_id) REFERENCES usuarios (id) ON DELETE CASCADE
+        )
+    ''')
+
+    # NOVA TABELA: Saúde Checkup (Terapia, Exames, Medicamentos, etc.)
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS saude_checkup (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            titulo TEXT NOT NULL, -- 'Terapia', 'Exame de Sangue', ou Nome do Remédio
+            categoria TEXT NOT NULL, -- 'terapia', 'exames', 'medicamento'
+            data TEXT, -- YYYY-MM-DD
+            hora TEXT, -- HH:MM
+            status TEXT DEFAULT 'agendado', -- 'agendado' ou 'concluido'
             FOREIGN KEY (user_id) REFERENCES usuarios (id) ON DELETE CASCADE
         )
     ''')
@@ -123,31 +139,25 @@ inicializar_banco()
 # --- HELPER FUNCTIONS ---
 
 def obter_sobra_mes(conn, user_id, ano, mes):
-    """Calcula recursivamente e com segurança a sobra líquida de um determinado mês."""
-    # Busca se há saldo inicial configurado manualmente para este mês específico
     saldo_man = conn.execute(
         'SELECT valor FROM saldos_iniciais WHERE user_id = ? AND ano = ? AND mes = ?', 
         (user_id, ano, mes)
     ).fetchone()
 
-    # Se houver um saldo inicial configurado manualmente, usa ele. Caso contrário, calcula dinamicamente baseado na sobra do mês anterior
     if saldo_man:
         saldo_inicial = saldo_man['valor']
     else:
-        # Se for janeiro, o anterior é dezembro do ano anterior
         if mes == 1:
             prev_mes, prev_ano = 12, ano - 1
         else:
             prev_mes, prev_ano = mes - 1, ano
 
-        # Evita loops infinitos limitando a recursão para trás (limite de 2 anos)
         hoje = datetime.now()
         if (ano < hoje.year - 2):
             saldo_inicial = 0.0
         else:
             saldo_inicial = obter_sobra_mes(conn, user_id, prev_ano, prev_mes)
 
-    # Soma as entradas e subtrai as saídas do mês consultado
     transacoes = conn.execute(
         'SELECT valor, tipo FROM financeiro WHERE user_id = ? AND ano = ? AND mes = ?',
         (user_id, ano, mes)
@@ -157,7 +167,7 @@ def obter_sobra_mes(conn, user_id, ano, mes):
     fixos = sum(t['valor'] for t in transacoes if t['tipo'] == 'gastos_fixos')
     variaveis = sum(t['valor'] for t in transacoes if t['tipo'] == 'gastos_variaveis')
 
-    return saldo_inicial + entradas - (fixos + variaveis)
+    return saldo_inicial + entries - (fixos + variaveis) if 'entries' in locals() else saldo_inicial + entradas - (fixos + variaveis)
 
 # --- TEMPLATE HTML COMPLETO ---
 HTML_TEMPLATE = '''
@@ -181,6 +191,7 @@ HTML_TEMPLATE = '''
             --accent-red: #E07A5F; 
             --border-color: #EADEC9;
             --star-color: #F4C430;
+            --accent-blue: #A8DADC; /* Azul suave para a aba saúde */
         }
 
         body {
@@ -437,8 +448,8 @@ HTML_TEMPLATE = '''
             letter-spacing: 1px;
         }
 
-        /* Layout SMART, Mídia e Finanças */
-        .smart-container, .fin-column, .resumo-box, .filtro-box {
+        /* Layout SMART, Mídia, Saúde e Finanças */
+        .smart-container, .fin-column, .resumo-box, .filtro-box, .saude-box {
             background-color: var(--card-bg);
             padding: 15px;
             border-radius: 16px;
@@ -520,7 +531,7 @@ HTML_TEMPLATE = '''
             font-size: 0.9rem;
         }
 
-        .btn-submit-smart {
+        .btn-submit-smart, .btn-submit-saude {
             background-color: var(--accent-terracotta);
             color: white;
             border: none;
@@ -533,11 +544,15 @@ HTML_TEMPLATE = '''
             cursor: pointer;
         }
 
+        .btn-submit-saude {
+            background-color: var(--accent-green);
+        }
+
         .active-goals-list {
             margin-top: 20px;
         }
 
-        .goal-item {
+        .goal-item, .saude-item-box {
             background-color: #FAF9F6;
             border-left: 6px solid var(--accent-terracotta);
             padding: 15px;
@@ -547,35 +562,43 @@ HTML_TEMPLATE = '''
             border-left-width: 6px;
         }
 
-        .goal-item-header {
+        .saude-item-box {
+            border-left-color: var(--accent-blue);
+        }
+
+        .goal-item-header, .saude-item-header {
             display: flex;
             justify-content: space-between;
             align-items: center;
             margin-bottom: 8px;
         }
 
-        .goal-title {
+        .goal-title, .saude-item-title {
             font-size: 1.05rem;
             font-weight: bold;
             color: var(--accent-terracotta);
             margin: 0;
         }
 
-        .goal-grid {
+        .saude-item-title {
+            color: var(--text-main);
+        }
+
+        .goal-grid, .saude-grid {
             display: flex;
             flex-direction: column;
             gap: 10px;
             font-size: 0.85rem;
         }
 
-        .goal-sub-box {
+        .goal-sub-box, .saude-sub-box {
             background: white;
             padding: 10px;
             border-radius: 6px;
             border: 1px dashed var(--border-color);
         }
 
-        .goal-sub-box strong {
+        .goal-sub-box strong, .saude-sub-box strong {
             color: var(--text-main);
             display: block;
             margin-bottom: 4px;
@@ -584,13 +607,13 @@ HTML_TEMPLATE = '''
         }
 
         /* Estilos Finanças */
-        .fin-form, .shelf-form {
+        .fin-form, .shelf-form, .saude-form {
             display: flex;
             flex-direction: column;
             gap: 8px;
             margin-bottom: 15px;
         }
-        .fin-form input, .shelf-form input, .shelf-form select, .fin-form select {
+        .fin-form input, .shelf-form input, .shelf-form select, .fin-form select, .saude-form select, .saude-form input {
             padding: 10px;
             border-radius: 8px;
             border: 1px solid var(--border-color);
@@ -608,7 +631,7 @@ HTML_TEMPLATE = '''
             cursor: pointer;
         }
 
-        .fin-item, .media-item {
+        .fin-item, .media-item, .saude-list-item {
             display: flex;
             justify-content: space-between;
             align-items: center;
@@ -652,7 +675,7 @@ HTML_TEMPLATE = '''
             margin-top: 15px;
         }
 
-        .filtro-box h3 {
+        .filtro-box h3, .saude-section-title {
             margin-top: 0;
             font-size: 0.95rem;
             border-bottom: 1px solid var(--border-color);
@@ -694,6 +717,44 @@ HTML_TEMPLATE = '''
         .top5-box h3 { margin-top:0; border-bottom:1px solid var(--border-color); padding-bottom:5px; text-transform: uppercase; letter-spacing: 1px; }
 
         .stars { color: var(--star-color); font-weight: bold; }
+
+        /* Estilos de Hábitos Diários Aba Saúde */
+        .habitos-diarios-container {
+            display: flex;
+            gap: 12px;
+            margin-bottom: 20px;
+        }
+
+        .habitos-card {
+            flex: 1;
+            background: #F0F7F4;
+            border: 1px solid var(--accent-green);
+            padding: 15px;
+            border-radius: 12px;
+            text-align: center;
+        }
+
+        .habitos-card.agua {
+            background: #EDF6F9;
+            border-color: var(--accent-blue);
+        }
+
+        .habitos-btn-group {
+            display: flex;
+            justify-content: center;
+            gap: 8px;
+            margin-top: 10px;
+        }
+
+        .habitos-btn {
+            background: var(--card-bg);
+            border: 1px solid var(--border-color);
+            padding: 5px 12px;
+            border-radius: 8px;
+            font-weight: bold;
+            cursor: pointer;
+            font-size: 0.85rem;
+        }
     </style>
 </head>
 <body>
@@ -737,6 +798,7 @@ HTML_TEMPLATE = '''
         <div class="nav-tabs">
             <button class="tab-btn active" id="btn-diario" onclick="switchTab('diario')">Rotina</button>
             <button class="tab-btn" id="btn-smart" onclick="switchTab('smart')">SMART</button>
+            <button class="tab-btn" id="btn-saude" onclick="switchTab('saude')">Saúde</button>
             <button class="tab-btn" id="btn-midia" onclick="switchTab('midia')">Leituras</button>
             <button class="tab-btn" id="btn-financeiro" onclick="switchTab('financeiro')">Finanças</button>
         </div>
@@ -849,7 +911,7 @@ HTML_TEMPLATE = '''
                             <textarea name="obstacles" style="height: 50px;" placeholder="Ex: Ficar escolhendo demais e perder o foco..."></textarea>
                         </div>
                         <div class="form-group">
-                            <label>Como vou superar esse obstáculo?</label>
+                            <label>Como vou superar esse obstacle?</label>
                             <textarea name="plan_obstacles" style="height: 50px;" placeholder="Ex: Definir despertador de 20 minutos por lote..."></textarea>
                         </div>
                     </div>
@@ -890,6 +952,103 @@ HTML_TEMPLATE = '''
                     </div>
                     {% endfor %}
                 </div>
+            </div>
+        </div>
+
+        <div id="tab-saude" class="tab-content">
+            
+            <div class="habitos-diarios-container">
+                <div class="habitos-card agua">
+                    <h4 style="color: #31572C;">Meta de Água 💧</h4>
+                    <p style="font-size: 1.8rem; font-weight: 800; margin: 5px 0;" id="agua-contador">{{ dados.usuario.copos_agua }} / 8 copos</p>
+                    <div class="habitos-btn-group">
+                        <a href="/update_agua/-1" style="text-decoration:none;"><button class="habitos-btn">-</button></a>
+                        <a href="/update_agua/1" style="text-decoration:none;"><button class="habitos-btn" style="background:var(--accent-blue); border-color:#90e0ef;">+ Bebi Copo</button></a>
+                    </div>
+                </div>
+
+                <div class="habitos-card">
+                    <h4 style="color: #2F5233;">Exercício Físico 💪</h4>
+                    <p style="font-size: 1.1rem; font-weight: bold; margin: 10px 0 5px 0;">
+                        {% if dados.usuario.exercicio_feito %}
+                            Feito hoje! 🎉
+                        {% else %}
+                            Ainda pendente 🏃‍♀️
+                        {% endif %}
+                    </p>
+                    <div class="habitos-btn-group">
+                        <a href="/toggle_exercicio" style="text-decoration:none;">
+                            <button class="habitos-btn" style="{% if dados.usuario.exercicio_feito %}background:var(--accent-green); color:white;{% endif %}">
+                                {% if dados.usuario.exercicio_feito %}Concluído{% else %}Marcar como Feito{% endif %}
+                            </button>
+                        </a>
+                    </div>
+                </div>
+            </div>
+
+            <div class="saude-box">
+                <h2 style="margin-top:0; color: var(--accent-green); text-transform: uppercase; font-size: 1.1rem; letter-spacing: 1px;">Adicionar à Rotina de Saúde</h2>
+                <form action="/add_saude" method="POST" class="saude-form">
+                    <input type="text" name="titulo" placeholder="Descrição (Ex: Terapia com Roberta, Ritalina, Hemograma)" required>
+                    <select name="categoria" required>
+                        <option value="terapia">Terapia</option>
+                        <option value="exames">Exame de Sangue / Consultas</option>
+                        <option value="medicamento">Medicamentos</option>
+                    </select>
+                    
+                    <div style="display:flex; gap:8px;">
+                        <input type="date" name="data" style="flex:1;">
+                        <input type="time" name="hora" style="flex:1;">
+                    </div>
+                    
+                    <select name="status" required>
+                        <option value="agendado">Agendado / Pendente</option>
+                        <option value="concluido">Concluído</option>
+                    </select>
+                    <button type="submit" class="btn-submit-saude">Adicionar à Rotina</button>
+                </form>
+            </div>
+
+            <div class="saude-box">
+                <h3 class="saude-section-title" style="color: var(--accent-terracotta);">Terapia & Consultas</h3>
+                {% for item in dados.saude if item.categoria in ['terapia', 'exames'] %}
+                <div class="saude-list-item">
+                    <span>
+                        <a href="/toggle_saude/{{ item.id }}" style="text-decoration:none; margin-right:8px; font-size:1.1rem;">
+                            {% if item.status == 'concluido' %}✅{% else %}⬜{% endif %}
+                        </a>
+                        <strong style="{% if item.status == 'concluido' %}text-decoration:line-through; color:var(--text-muted);{% endif %}">
+                            [{{ item.categoria | capitalize }}] {{ item.titulo }}
+                        </strong>
+                        <br>
+                        <small style="color:var(--text-muted); padding-left:26px;">
+                            Data: {% if item.data %}{{ item.data[8:10] }}/{{ item.data[5:7] }}{% else %}Não definida{% endif %} às {{ item.hora or '--:--' }}
+                        </small>
+                    </span>
+                    <a href="/delete_saude/{{ item.id }}" style="color:var(--accent-red); text-decoration:none; font-size:0.85rem;">Remover</a>
+                </div>
+                {% endfor %}
+            </div>
+
+            <div class="saude-box">
+                <h3 class="saude-section-title" style="color: var(--accent-green);">Medicamentos de Uso Contínuo</h3>
+                {% for item in dados.saude if item.categoria == 'medicamento' %}
+                <div class="saude-list-item">
+                    <span>
+                        <a href="/toggle_saude/{{ item.id }}" style="text-decoration:none; margin-right:8px; font-size:1.1rem;">
+                            {% if item.status == 'concluido' %}💊 Concluído{% else %}⬜ Tomar{% endif %}
+                        </a>
+                        <strong style="{% if item.status == 'concluido' %}text-decoration:line-through; color:var(--text-muted);{% endif %}">
+                            {{ item.titulo }}
+                        </strong>
+                        <br>
+                        <small style="color:var(--text-muted); padding-left:26px;">
+                            Horário cadastrado: {{ item.hora or 'Não definido' }}
+                        </small>
+                    </span>
+                    <a href="/delete_saude/{{ item.id }}" style="color:var(--accent-red); text-decoration:none; font-size:0.85rem;">Remover</a>
+                </div>
+                {% endfor %}
             </div>
         </div>
 
@@ -1079,17 +1238,13 @@ def index():
         return render_template_string(HTML_TEMPLATE, dados=None)
     
     user_id = session['user_id']
-    
-    # Gerencia mês e ano ativos da seção de controle
     ano_atual = int(session.get('financeiro_ano', datetime.now().year))
     mes_atual = int(session.get('financeiro_mes', datetime.now().month))
     
     conn = obter_conexao()
-    
-    # Busca dados do usuário logado
     usuario = conn.execute('SELECT * FROM usuarios WHERE id = ?', (user_id,)).fetchone()
     
-    # Busca tarefas do usuário
+    # Busca tarefas
     tarefas_db = conn.execute('SELECT * FROM tarefas WHERE user_id = ?', (user_id,)).fetchall()
     brain_dump = [t for t in tarefas_db if t['coluna'] == 'brain_dump']
     foco_hoje = [t for t in tarefas_db if t['coluna'] == 'foco_hoje']
@@ -1098,7 +1253,6 @@ def index():
     # Busca metas SMART
     metas_smart = conn.execute('SELECT * FROM metas_smart WHERE user_id = ? ORDER BY step1_deadline ASC', (user_id,)).fetchall()
     
-    # Visualizador de Tempo / Dashboard das Metas SMART
     hoje_data = datetime.now()
     metas_mes_count = 0
     metas_ano_count = 0
@@ -1116,14 +1270,17 @@ def index():
     # Busca mídias
     midias = conn.execute('SELECT * FROM mídias WHERE user_id = ?', (user_id,)).fetchall()
     
-    # Busca financeiro FILTRADO por mês e ano vigentes
+    # Busca financeiro
     financeiro = conn.execute(
         'SELECT * FROM financeiro WHERE user_id = ? AND ano = ? AND mes = ?', 
         (user_id, ano_atual, mes_atual)
     ).fetchall()
     
-    # Busca desejos (Quero vs Preciso)
+    # Busca desejos
     desejos = conn.execute('SELECT * FROM desejos WHERE user_id = ?', (user_id,)).fetchall()
+
+    # Busca Saúde Checkup
+    saude = conn.execute('SELECT * FROM saude_checkup WHERE user_id = ? ORDER BY data ASC, hora ASC', (user_id,)).fetchall()
     
     # Lógica de Saldo Acumulado
     saldo_man = conn.execute(
@@ -1164,6 +1321,7 @@ def index():
         "midias": midias,
         "financeiro": financeiro,
         "desejos": desejos,
+        "saude": saude,
         "meta_livros_quero": usuario['meta_livros'],
         "meta_filmes_quero": usuario['meta_filmes'],
         "mes_atual": mes_atual,
@@ -1177,6 +1335,74 @@ def index():
     }
     
     return render_template_string(HTML_TEMPLATE, dados=dados)
+
+# --- ROTAS DA ABA SAÚDE ---
+
+@app.route('/add_saude', methods=['POST'])
+def add_saude():
+    if 'user_id' not in session: return redirect(url_for('index'))
+    conn = obter_conexao()
+    conn.execute('''
+        INSERT INTO saude_checkup (user_id, titulo, categoria, data, hora, status)
+        VALUES (?, ?, ?, ?, ?, ?)
+    ''', (
+        session['user_id'],
+        request.form.get("titulo"),
+        request.form.get("categoria"),
+        request.form.get("data"),
+        request.form.get("hora"),
+        request.form.get("status")
+    ))
+    conn.commit()
+    conn.close()
+    return redirect(url_for('index'))
+
+@app.route('/toggle_saude/<int:item_id>')
+def toggle_saude(item_id):
+    if 'user_id' not in session: return redirect(url_for('index'))
+    conn = obter_conexao()
+    item = conn.execute('SELECT status FROM saude_checkup WHERE id = ?', (item_id,)).fetchone()
+    if item:
+        novo_status = 'concluido' if item['status'] == 'agendado' else 'agendado'
+        conn.execute('UPDATE saude_checkup SET status = ? WHERE id = ? AND user_id = ?', (novo_status, item_id, session['user_id']))
+        conn.commit()
+    conn.close()
+    return redirect(url_for('index'))
+
+@app.route('/delete_saude/<int:item_id>')
+def delete_saude(item_id):
+    if 'user_id' not in session: return redirect(url_for('index'))
+    conn = obter_conexao()
+    conn.execute('DELETE FROM saude_checkup WHERE id = ? AND user_id = ?', (item_id, session['user_id']))
+    conn.commit()
+    conn.close()
+    return redirect(url_for('index'))
+
+@app.route('/update_agua/<int:valor>')
+def update_agua(valor):
+    if 'user_id' not in session: return redirect(url_for('index'))
+    conn = obter_conexao()
+    user = conn.execute('SELECT copos_agua FROM usuarios WHERE id = ?', (session['user_id'],)).fetchone()
+    if user:
+        novos_copos = max(0, user['copos_agua'] + valor)
+        conn.execute('UPDATE usuarios SET copos_agua = ? WHERE id = ?', (novos_copos, session['user_id']))
+        conn.commit()
+    conn.close()
+    return redirect(url_for('index'))
+
+@app.route('/toggle_exercicio')
+def toggle_exercicio():
+    if 'user_id' not in session: return redirect(url_for('index'))
+    conn = obter_conexao()
+    user = conn.execute('SELECT exercicio_feito FROM usuarios WHERE id = ?', (session['user_id'],)).fetchone()
+    if user:
+        novo_status = 1 - user['exercicio_feito']
+        conn.execute('UPDATE usuarios SET exercicio_feito = ? WHERE id = ?', (novo_status, session['user_id']))
+        conn.commit()
+    conn.close()
+    return redirect(url_for('index'))
+
+# --- OUTRAS ROTAS ---
 
 @app.route('/selecionar_mes', methods=['POST'])
 def selecionar_mes():
@@ -1197,7 +1423,6 @@ def login():
     if user and user['password'] == hash_senha(password):
         session['user_id'] = user['id']
         session['username'] = user['username']
-        # Seta o mês e ano vigentes para controle
         session['financeiro_mes'] = datetime.now().month
         session['financeiro_ano'] = datetime.now().year
         return redirect(url_for('index'))
@@ -1361,7 +1586,6 @@ def update_saldo_inicial():
     
     if saldo:
         conn = obter_conexao()
-        # Insere ou atualiza o saldo inicial manual configurado para o respectivo mês/ano
         conn.execute('''
             INSERT INTO saldos_iniciais (user_id, ano, mes, valor)
             VALUES (?, ?, ?, ?)
@@ -1414,4 +1638,6 @@ def service_worker():
     return sw_code, 200, {'Content-Type': 'application/javascript'}
 
 if __name__ == '__main__':
+    # Para evitar conflitos de cache no primeiro deploy com as novas tabelas de saúde,
+    # caso você precise forçar a atualização das tabelas, o banco de dados é ajustado na inicialização
     app.run(debug=True, host='0.0.0.0', port=5000)
